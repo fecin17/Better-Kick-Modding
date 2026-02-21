@@ -1,0 +1,162 @@
+/**
+ * Kick Chat Enhancer - Stylové vylepšení
+ * Inspirováno Twitch chatem - lepší čitelnost a vizuální oddělení
+ * :host-context() umožňuje fungování i uvnitř Shadow DOM
+ */
+
+/* ===== HLAVNÍ PŘEPÍNAČE (řízeno content scriptem) ===== */
+:root {
+  --kce-message-spacing: 0;
+  --kce-visual-separation: 0;
+  --kce-reply-styling: 0;
+  --kce-emote-size: 0;
+  --kce-username-highlight: 0;
+}
+
+[data-kce-message-spacing="1"] {
+  --kce-message-spacing: 1;
+}
+[data-kce-visual-separation="1"] {
+  --kce-visual-separation: 1;
+}
+[data-kce-reply-styling="1"] {
+  --kce-reply-styling: 1;
+}
+[data-kce-emote-size="1"] {
+  --kce-emote-size: 1;
+}
+[data-kce-username-highlight="1"] {
+  --kce-username-highlight: 1;
+}
+
+/* ===== MEZERY MEZI ZPRÁVAMI (Twitch styl – maximálně kompaktní) ===== */
+[data-kce-message-spacing="1"] [data-chat-entry],
+[data-kce-message-spacing="1"] .kce-message,
+:host-context([data-kce-message-spacing="1"]) [data-chat-entry],
+:host-context([data-kce-message-spacing="1"]) .kce-message {
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+  margin-top: 1px !important;
+  margin-bottom: 1px !important;
+  line-height: 1.35 !important;
+  min-height: unset !important;
+}
+
+/* ===== VIZUÁLNÍ ODDĚLENÍ ZPRÁV (Twitch styl – jemný hover) ===== */
+[data-kce-visual-separation="1"] [data-chat-entry],
+[data-kce-visual-separation="1"] .kce-message,
+:host-context([data-kce-visual-separation="1"]) [data-chat-entry],
+:host-context([data-kce-visual-separation="1"]) .kce-message {
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+  margin-left: -6px !important;
+  margin-right: -6px !important;
+  border-radius: 4px !important;
+  transition: background-color 0.15s ease !important;
+}
+
+[data-kce-visual-separation="1"] [data-chat-entry]:hover,
+[data-kce-visual-separation="1"] .kce-message:hover,
+:host-context([data-kce-visual-separation="1"]) [data-chat-entry]:hover,
+:host-context([data-kce-visual-separation="1"]) .kce-message:hover {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Alternativní cílení - Kick může používat jiné třídy */
+[data-kce-visual-separation="1"] [class*="chat-entry"],
+[data-kce-visual-separation="1"] [class*="chatEntry"],
+[data-kce-visual-separation="1"] [class*="message-row"],
+:host-context([data-kce-visual-separation="1"]) [class*="chat-entry"],
+:host-context([data-kce-visual-separation="1"]) [class*="chatEntry"],
+:host-context([data-kce-visual-separation="1"]) [class*="message-row"] {
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+  border-radius: 4px !important;
+}
+
+[data-kce-visual-separation="1"] [class*="chat-entry"]:hover,
+[data-kce-visual-separation="1"] [class*="chatEntry"]:hover,
+:host-context([data-kce-visual-separation="1"]) [class*="chat-entry"]:hover,
+:host-context([data-kce-visual-separation="1"]) [class*="chatEntry"]:hover {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* Redukce výchozích mezer Kick chatu */
+[data-kce-message-spacing="1"] [data-chat-entry] > div,
+[data-kce-message-spacing="1"] .kce-message > div,
+:host-context([data-kce-message-spacing="1"]) [data-chat-entry] > div,
+:host-context([data-kce-message-spacing="1"]) .kce-message > div {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* ===== VYLEPŠENÍ ODPOVĚDÍ (Reply) ===== */
+[data-kce-reply-styling="1"] [class*="reply"] {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.12) 0%, transparent 100%) !important;
+  border-left: 3px solid rgba(99, 102, 241, 0.6) !important;
+  padding-left: 12px !important;
+  margin-left: 8px !important;
+  border-radius: 0 6px 6px 0 !important;
+}
+
+[data-kce-reply-styling="1"] [class*="Replying"],
+[data-kce-reply-styling="1"] [class*="replying"] {
+  font-size: 0.9em !important;
+  color: rgba(167, 139, 250, 0.9) !important;
+  margin-bottom: 4px !important;
+}
+
+/* ===== LIMIT VELIKOSTI EMOTŮ (konzistentní jako na Twitchi) ===== */
+[data-kce-emote-size="1"] img[class*="emote"],
+[data-kce-emote-size="1"] img[data-emote-id],
+[data-kce-emote-size="1"] .gc-emote-c,
+:host-context([data-kce-emote-size="1"]) img[class*="emote"],
+:host-context([data-kce-emote-size="1"]) img[data-emote-id],
+:host-context([data-kce-emote-size="1"]) .gc-emote-c {
+  max-height: 28px !important;
+  max-width: 28px !important;
+  vertical-align: middle !important;
+  object-fit: contain !important;
+}
+
+/* ===== ZVÝRAZNĚNÍ UŽIVATELSKÝCH JMEN ===== */
+[data-kce-username-highlight="1"] [class*="username"] span,
+[data-kce-username-highlight="1"] [class*="chat-username"],
+[data-kce-username-highlight="1"] [class*="user-name"],
+[data-kce-username-highlight="1"] a[class*="username"] {
+  font-weight: 600 !important;
+}
+
+/* Cílení na strukturu [ikona] [jméno]: - první barevný span před dvojtečkou */
+[data-kce-username-highlight="1"] [data-chat-entry] > div > span:first-of-type,
+[data-kce-username-highlight="1"] [data-chat-entry] [class*="message"] span:first-of-type {
+  font-weight: 600 !important;
+}
+
+/* ===== OBECNÉ VYLEPŠENÍ ČITELNOSTI ===== */
+/* Kontejner chatu - kompaktní padding */
+[class*="chatroom"] [class*="scroll"],
+[class*="chat-room"] [class*="scroll"],
+[class*="chat"] [class*="messages"] {
+  padding: 6px 8px !important;
+  gap: 0 !important;
+}
+
+/* Posuvník - viditelnější */
+[class*="chat"] ::-webkit-scrollbar {
+  width: 8px !important;
+}
+
+[class*="chat"] ::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border-radius: 4px !important;
+}
+
+[class*="chat"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2) !important;
+  border-radius: 4px !important;
+}
+
+[class*="chat"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3) !important;
+}

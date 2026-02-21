@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kick Chat Enhancer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup">
+    <h1>Kick Chat Enhancer</h1>
+    <p class="subtitle">Vylepšení vzhledu chatu na Kick.com</p>
+
+    <div class="settings">
+      <label class="toggle">
+        <input type="checkbox" id="messageSpacing" checked>
+        <span class="slider"></span>
+        <span class="label">Větší mezery mezi zprávami</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="visualSeparation" checked>
+        <span class="slider"></span>
+        <span class="label">Vizuální oddělení zpráv (hover efekt)</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="improveReplyStyling" checked>
+        <span class="slider"></span>
+        <span class="label">Lepší styling odpovědí</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="emoteSize" checked>
+        <span class="slider"></span>
+        <span class="label">Limit velikosti emotů</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="usernameHighlight" checked>
+        <span class="slider"></span>
+        <span class="label">Zvýraznění uživatelských jmen</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="pauseChatOnHover" checked>
+        <span class="slider"></span>
+        <span class="label">Pozastavit chat při najetí myší</span>
+      </label>
+    </div>
+
+    <p class="footer">Obnov stránku na Kick.com pro aplikaci změn.</p>
+    <p class="footer"><strong>Nic se nemění?</strong> Otevři DevTools (F12) → Konzole → spusť soubor <code>inspect-chat-dom.js</code> a pošli výstup.</p>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
