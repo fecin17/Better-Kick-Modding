@@ -16,9 +16,13 @@
     emoteSize: true,
     usernameHighlight: true,
     pauseChatOnHover: true,
+    modDragHandle: true,
+    chatFontSize: 13,
+    messageSpacingPx: 5,
   };
 
   let cachedCss = null;
+  let modDragIntervalId = null;
 
   async function getCssText() {
     if (cachedCss) return cachedCss;
@@ -74,33 +78,329 @@
     html.dataset.kceEmoteSize = settings.emoteSize ? "1" : "0";
     html.dataset.kceUsernameHighlight = settings.usernameHighlight ? "1" : "0";
     html.dataset.kcePauseChatOnHover = settings.pauseChatOnHover ? "1" : "0";
+    html.dataset.kceModDrag = settings.modDragHandle ? "1" : "0";
+    const fontSize = settings.chatFontSize || 13;
+    html.style.setProperty("--kce-font-size", fontSize + "px");
+    const msgSpacing = settings.messageSpacingPx ?? 5;
+    html.style.setProperty("--kce-msg-spacing", msgSpacing + "px");
+    if (!settings.modDragHandle) {
+      querySelectorAllDeep(document.body, ".kce-mod-handle").forEach((h) => h.remove());
+    }
+  }
+
+  /** Vrátí všechny elementy odpovídající selektoru v root i uvnitř všech Shadow DOM. */
+  function querySelectorAllDeep(root, selector) {
+    const out = [];
+    const collect = (node) => {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+      try {
+        const list = node.querySelectorAll?.(selector) ?? [];
+        list.forEach((el) => out.push(el));
+        const all = node.querySelectorAll?.("*") ?? [];
+        all.forEach((child) => {
+          if (child.shadowRoot) collect(child.shadowRoot);
+        });
+      } catch (_) {}
+    };
+    collect(root);
+    return out;
   }
 
   function tagChatMessages(root = null) {
     const doc = document;
+    const base = root ?? doc;
 
-    // 1. data-chat-entry (ověřené z kick-tools)
-    doc.querySelectorAll("[data-chat-entry]").forEach((el) => {
+    // 1. data-chat-entry (včetně uvnitř Shadow DOM)
+    querySelectorAllDeep(base, "[data-chat-entry]").forEach((el) => {
       addEnhancementClass(el, "message");
+      ensureModHandle(el);
     });
 
     // 2. Třídy obsahující chat-entry, chatEntry, message-row
-    doc.querySelectorAll("[class*='chat-entry'], [class*='chatEntry'], [class*='message-row']").forEach((el) => {
+    querySelectorAllDeep(base, "[class*='chat-entry'], [class*='chatEntry'], [class*='message-row']").forEach((el) => {
       addEnhancementClass(el, "message");
+      ensureModHandle(el);
     });
 
-    // 3. Fallback: divy v scroll kontejneru chatu s typickou strukturou (ikona + jméno + text)
-    const chatScroll = doc.querySelector("[class*='chat'][class*='scroll'], [class*='chatroom'][class*='scroll']");
+    // 3. Fallback: divy v scroll kontejneru chatu (včetně Shadow DOM)
+    const searchRoot = base === document ? document.body : base;
+    const chatScroll = base.querySelector?.("[class*='chat'][class*='scroll'], [class*='chatroom'][class*='scroll']")
+      || querySelectorDeep(searchRoot, "[class*='chat'][class*='scroll']")
+      || querySelectorDeep(searchRoot, "[class*='chatroom'][class*='scroll']");
     if (chatScroll) {
-      const candidates = chatScroll.querySelectorAll(":scope > div > div, :scope > div");
-      candidates?.forEach((el) => {
+      const candidates = chatScroll.querySelectorAll?.(":scope > div > div, :scope > div") ?? [];
+      candidates.forEach((el) => {
         const text = el.textContent || "";
         const hasColon = text.includes(":");
         const hasEmote = el.querySelector("img[data-emote-id], img.gc-emote-c, img[class*='emote']");
-        if (hasColon || hasEmote) addEnhancementClass(el, "message");
+        if (hasColon || hasEmote) {
+          addEnhancementClass(el, "message");
+          ensureModHandle(el);
+        }
       });
     }
 
+    const searchRootForIndex = base === document ? document.body : base;
+    const seen = new Set();
+    const skipText = /Send a message|Slow mode activated|^Chat$/i;
+
+    function addIfMessageRow(el) {
+      if (seen.has(el)) return;
+      const text = (el.textContent || "").trim();
+      if (skipText.test(text) || text.length < 3) return;
+      if (el.querySelector?.("input, textarea, [contenteditable=true]")) return;
+      const hasLink = el.querySelector?.("a[href]");
+      const hasColon = text.includes(":");
+      const hasEmote = el.querySelector?.("img");
+      const looksLikeMessage = (hasLink && hasColon) || (hasColon && text.length > 8) || (hasEmote && hasColon);
+      const reasonableSize = el.childNodes.length >= 1 && el.childNodes.length <= 100;
+      if (looksLikeMessage && reasonableSize) {
+        seen.add(el);
+        addEnhancementClass(el, "message");
+        ensureModHandle(el);
+      }
+    }
+
+    // 4a. div[data-index] (Kick virtuální seznam)
+    querySelectorAllDeep(searchRootForIndex, "div[data-index]").forEach(addIfMessageRow);
+
+    // 4b. div.group uvnitř řádku – rodič je řádek zprávy
+    querySelectorAllDeep(searchRootForIndex, "[class*='group']").forEach((el) => {
+      const text = (el.textContent || "").trim();
+      if (!text.includes(":") || text.length < 4) return;
+      if (el.querySelector?.("input, textarea")) return;
+      const parent = el.parentElement;
+      if (!parent || seen.has(parent)) return;
+      if (parent.querySelector?.("a[href]") || el.querySelector?.("a[href]")) {
+        const reasonable = parent.childNodes.length >= 1 && parent.childNodes.length <= 100;
+        if (reasonable) {
+          seen.add(parent);
+          addEnhancementClass(parent, "message");
+          ensureModHandle(parent);
+        }
+      }
+    });
+
+    // 5. Uvnitř chatroomu: třídy message/line/entry/row (včetně Shadow DOM)
+    const chatrooms = querySelectorAllDeep(base, "[class*='chatroom']");
+    chatrooms.forEach((chatroom) => {
+      querySelectorAllDeep(chatroom, "[class*='message'], [class*='Message'], [class*='line'], [class*='Line'], [class*='entry'], [class*='Entry'], [class*='row'], [class*='Row']").forEach((el) => {
+        if (seen.has(el)) return;
+        const hasLink = el.querySelector?.("a[href]");
+        const hasColon = (el.textContent || "").includes(":");
+        const hasEmote = el.querySelector?.("img");
+        if ((hasLink && hasColon) || hasEmote) {
+          const reasonable = el.childNodes.length >= 1 && el.childNodes.length <= 80;
+          if (reasonable) {
+            seen.add(el);
+            addEnhancementClass(el, "message");
+            ensureModHandle(el);
+          }
+        }
+      });
+    });
+
+  }
+
+  function ensureModHandle(entryEl) {
+    if (document.documentElement.dataset.kceModDrag !== "1") return;
+    if (entryEl.querySelector(".kce-mod-handle")) return;
+    const root = entryEl.getRootNode();
+    if (root instanceof ShadowRoot) injectCssIntoRoot(root);
+    const handle = document.createElement("div");
+    handle.className = "kce-mod-handle";
+    handle.textContent = "\u22EE";
+    entryEl.appendChild(handle);
+  }
+
+  function findEntry(startEl) {
+    let el = startEl;
+    while (el && el !== document.body) {
+      if (el.classList?.contains("kce-message") || el.dataset?.index !== undefined || el.dataset?.chatEntry !== undefined) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function getMessageData(entryEl) {
+    const channelMatch = window.location.pathname.match(/^\/([^/]+)/);
+    const channel = channelMatch ? channelMatch[1] : null;
+    let messageId = entryEl.id?.replace(/^[^0-9]+/, "") || entryEl.dataset?.messageId || entryEl.dataset?.id || null;
+    if (!messageId && entryEl.dataset?.chatEntry && String(entryEl.dataset.chatEntry).match(/^\d+$/)) messageId = entryEl.dataset.chatEntry;
+    if (!messageId) {
+      const fromChild = entryEl.querySelector?.("[data-message-id], [data-id]");
+      if (fromChild) messageId = fromChild.dataset?.messageId || fromChild.dataset?.id || null;
+    }
+    const firstLink = entryEl.querySelector('a[href*="/"]');
+    let username = null;
+    if (firstLink && firstLink.href) {
+      const m = firstLink.getAttribute("href").match(/\/([^/]+)\/?$/);
+      if (m) username = m[1];
+    }
+    if (!username && firstLink) username = (firstLink.textContent || "").trim().replace(/:$/, "");
+    return { channel, messageId, username };
+  }
+
+  function getSwipeAction(pct) {
+    if (pct < 0.05) return null;
+    if (pct < 0.25) return { action: "delete", label: "Smazat", color: "#dc2626" };
+    if (pct < 0.75) {
+      const t = (pct - 0.25) / 0.5;
+      const durations = [
+        { s: 30, label: "30s" }, { s: 60, label: "1 min" }, { s: 300, label: "5 min" },
+        { s: 600, label: "10 min" }, { s: 1800, label: "30 min" }, { s: 3600, label: "1 h" },
+        { s: 86400, label: "1 den" }, { s: 604800, label: "7 dní" }, { s: 1209600, label: "14 dní" },
+      ];
+      const idx = Math.min(Math.floor(t * durations.length), durations.length - 1);
+      const d = durations[idx];
+      const r = Math.round(40 + t * 160);
+      const g = Math.round(160 - t * 120);
+      return { action: "timeout", label: "Timeout " + d.label, durationSeconds: d.s, color: "rgb(" + r + "," + g + ",30)" };
+    }
+    return { action: "ban", label: "PERMANENT BAN", color: "#7f1d1d" };
+  }
+
+  function setupModDragHandle(settings) {
+    if (modDragIntervalId) {
+      clearInterval(modDragIntervalId);
+      modDragIntervalId = null;
+    }
+    if (!settings.modDragHandle) return;
+    modDragIntervalId = setInterval(() => {
+      if (document.documentElement.dataset.kceModDrag !== "1") {
+        clearInterval(modDragIntervalId);
+        modDragIntervalId = null;
+        return;
+      }
+      tagChatMessages();
+    }, 2000);
+
+    let drag = null;
+
+    const onMove = (e) => {
+      if (!drag) return;
+      const dx = Math.max(0, e.clientX - drag.startX);
+      const pct = Math.min(dx / drag.entryWidth, 1);
+      drag.entry.style.setProperty("transform", "translateY(" + drag.origTY + "px) translateX(" + dx + "px)", "important");
+      drag.bg.style.width = dx + "px";
+      const info = getSwipeAction(pct);
+      if (info) {
+        drag.bg.style.background = info.color;
+        drag.bg.textContent = info.label;
+      } else {
+        drag.bg.style.background = "transparent";
+        drag.bg.textContent = "";
+      }
+      drag.lastPct = pct;
+    };
+
+    const onUp = () => {
+      if (!drag) return;
+      const pct = drag.lastPct || 0;
+      const info = getSwipeAction(pct);
+      const entry = drag.entry;
+      const bg = drag.bg;
+      const data = getMessageData(entry);
+      entry.style.setProperty("transform", "translateY(" + drag.origTY + "px)", "important");
+      entry.style.transition = "transform 0.2s ease";
+      bg.style.transition = "width 0.2s ease, opacity 0.2s ease";
+      bg.style.width = "0";
+      bg.style.opacity = "0";
+      setTimeout(() => {
+        entry.style.transition = "";
+        entry.style.removeProperty("z-index");
+        if (bg.parentNode) bg.remove();
+      }, 300);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      drag = null;
+      if (info) executeModAction(info, data);
+    };
+
+    document.addEventListener("mousedown", (e) => {
+      if (document.documentElement.dataset.kceModDrag !== "1") return;
+      const path = e.composedPath?.() ?? (e.target ? [e.target] : []);
+      const handle = path.find((el) => el?.classList?.contains?.("kce-mod-handle"));
+      if (!handle) return;
+      const entry = findEntry(handle);
+      if (!entry) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const cs = getComputedStyle(entry);
+      const matrix = cs.transform;
+      let origTY = 0;
+      if (matrix && matrix !== "none") {
+        const match = matrix.match(/matrix\([^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\s*([^)]+)\)/);
+        if (match) origTY = parseFloat(match[1]) || 0;
+      }
+      const bg = document.createElement("div");
+      bg.className = "kce-swipe-bg";
+      const entryH = entry.offsetHeight;
+      bg.style.cssText = "position:absolute;left:0;top:0;width:0;height:" + entryH + "px;" +
+        "display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;overflow:hidden;white-space:nowrap;" +
+        "text-shadow:0 1px 4px rgba(0,0,0,0.7);border-radius:0 4px 4px 0;pointer-events:none;" +
+        "transform:translateY(" + origTY + "px);z-index:1;transition:background 0.1s;";
+      const vParent = entry.parentElement;
+      if (vParent) vParent.appendChild(bg);
+
+      entry.style.setProperty("z-index", "10", "important");
+      drag = { entry, startX: e.clientX, entryWidth: entry.offsetWidth, origTY, bg, lastPct: 0 };
+      document.body.style.cursor = "grabbing";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    }, true);
+  }
+
+  async function runModerationApi(payload) {
+    const { action, channel, messageId, username, durationSeconds } = payload;
+    if (!channel) return;
+    const base = "https://kick.com";
+    try {
+      if (action === "delete" && messageId) {
+        const crRes = await fetch(base + "/api/v2/channels/" + encodeURIComponent(channel) + "/chatroom", { credentials: "include" });
+        const crData = await crRes.json();
+        const chatroomId = crData?.id ?? crData?.chatroom?.id;
+        if (chatroomId) {
+          const r = await fetch(base + "/api/v2/chatrooms/" + chatroomId + "/messages/" + encodeURIComponent(messageId), { method: "DELETE", credentials: "include" });
+          if (r.ok) console.log("[KCE] Zpráva smazána.");
+          else console.warn("[KCE] Smazání zprávy:", r.status, await r.text());
+        }
+      } else if (action === "ban" && username) {
+        const r = await fetch(base + "/api/v2/channels/" + encodeURIComponent(channel) + "/bans", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: username }),
+        });
+        if (r.ok) console.log("[KCE] Uživatel zabanován.");
+        else console.warn("[KCE] Ban:", r.status, await r.text());
+      } else if (action === "timeout" && username && durationSeconds) {
+        const r = await fetch(base + "/api/v1/channels/" + encodeURIComponent(channel) + "/mute-user", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: username, duration: durationSeconds }),
+        });
+        if (r.ok) console.log("[KCE] Timeout " + durationSeconds + "s.");
+        else console.warn("[KCE] Timeout:", r.status, await r.text());
+      }
+    } catch (err) {
+      console.warn("[KCE] Moderation error:", err);
+    }
+  }
+
+  function executeModAction(info, data) {
+    const payload = {
+      action: info.action,
+      channel: data.channel,
+      messageId: data.messageId,
+      username: data.username,
+      durationSeconds: info.durationSeconds || null,
+    };
+    runModerationApi(payload);
   }
 
   function observeChat() {
@@ -122,9 +422,13 @@
 
     observer.observe(document.body, { childList: true, subtree: true });
 
+    setTimeout(tagChatMessages, 100);
     setTimeout(tagChatMessages, 500);
+    setTimeout(tagChatMessages, 1000);
     setTimeout(tagChatMessages, 2000);
-    setTimeout(tagChatMessages, 5000);
+    setTimeout(tagChatMessages, 4000);
+    setTimeout(tagChatMessages, 8000);
+    setTimeout(tagChatMessages, 12000);
   }
 
   function querySelectorDeep(root, selector) {
@@ -491,6 +795,174 @@
     [500, 1500, 3500, 7000].forEach((ms) => setTimeout(run, ms));
   }
 
+  /**
+   * Po injekci CSS se změní velikosti řádků chatu.
+   * Virtualizér Kicku to potřebuje vědět – triggernem resize event
+   * a scrollneme chat dolů na nejnovější zprávy.
+   */
+  function nudgeVirtualizerAndScroll() {
+    window.dispatchEvent(new Event("resize"));
+    setTimeout(() => {
+      const chatEntry = querySelectorDeep(document.body, "[data-chat-entry]") || document.querySelector("[data-chat-entry]");
+      const sc = chatEntry ? getPrimaryScrollContainer(chatEntry) : null;
+      if (sc) {
+        sc.scrollTop = sc.scrollHeight;
+        requestAnimationFrame(() => { sc.scrollTop = sc.scrollHeight; });
+      }
+    }, 150);
+  }
+
+  /** Diagnostika – jednou vypíše do konzole strukturu jedné zprávy chatu */
+  let diagDone = false;
+  function logChatDiagnostic() {
+    if (diagDone) return;
+    const entry = document.querySelector("div[data-index]") || document.querySelector("[data-chat-entry]");
+    if (!entry) return;
+    diagDone = true;
+    const info = { tag: entry.tagName, classes: entry.className, attrs: {} };
+    for (const a of entry.attributes) info.attrs[a.name] = a.value;
+    const cs = getComputedStyle(entry);
+    info.computed = {
+      height: cs.height, minHeight: cs.minHeight, maxHeight: cs.maxHeight,
+      paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
+      marginTop: cs.marginTop, marginBottom: cs.marginBottom,
+      lineHeight: cs.lineHeight, display: cs.display,
+      position: cs.position, top: cs.top, transform: cs.transform,
+    };
+    info.offsetHeight = entry.offsetHeight;
+    info.clientHeight = entry.clientHeight;
+    info.inlineStyle = entry.style.cssText;
+    const parent = entry.parentElement;
+    if (parent) {
+      const pcs = getComputedStyle(parent);
+      info.parent = {
+        tag: parent.tagName, classes: parent.className,
+        display: pcs.display, gap: pcs.gap, rowGap: pcs.rowGap,
+        position: pcs.position, height: pcs.height,
+        inlineStyle: parent.style.cssText,
+      };
+    }
+    const child = entry.firstElementChild;
+    if (child) {
+      const ccs = getComputedStyle(child);
+      info.firstChild = {
+        tag: child.tagName, classes: child.className,
+        paddingTop: ccs.paddingTop, paddingBottom: ccs.paddingBottom,
+        marginTop: ccs.marginTop, marginBottom: ccs.marginBottom,
+        height: ccs.height, display: ccs.display,
+        inlineStyle: child.style.cssText,
+      };
+    }
+    console.log("[KCE] Chat message diagnostic:", JSON.stringify(info, null, 2));
+  }
+
+  const CHAT_WIDTH_KEY = "kickChatEnhancerChatWidth";
+
+  function findChatPanel() {
+    const selectors = [
+      "aside[class*='chat']",
+      "div[class*='chat-sidebar']",
+      "div[class*='chatroom-container']",
+      "#chatroom",
+      "[id*='chatroom']",
+      "aside",
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetHeight > 200) return el;
+    }
+    const chatroom = document.querySelector("[class*='chatroom']");
+    if (chatroom) {
+      let panel = chatroom;
+      while (panel.parentElement && panel.parentElement !== document.body) {
+        const sibling = panel.parentElement.querySelector("video, [class*='video'], [class*='player'], [class*='stream']");
+        if (sibling && sibling !== panel) return panel;
+        panel = panel.parentElement;
+      }
+      return chatroom.closest("aside") || chatroom.parentElement || chatroom;
+    }
+    return null;
+  }
+
+  async function setupChatResize() {
+    if (document.querySelector(".kce-chat-resize-handle")) return;
+
+    const trySetup = async () => {
+      const chatPanel = findChatPanel();
+      if (!chatPanel) return false;
+
+      const parent = chatPanel.parentElement;
+      if (!parent) return false;
+
+      const cs = getComputedStyle(chatPanel);
+      if (cs.position === "static") {
+        chatPanel.style.position = "relative";
+      }
+
+      const result = await chrome.storage.sync.get(CHAT_WIDTH_KEY);
+      const savedWidth = result[CHAT_WIDTH_KEY];
+      if (savedWidth) {
+        chatPanel.style.width = savedWidth + "px";
+        chatPanel.style.minWidth = savedWidth + "px";
+        chatPanel.style.maxWidth = savedWidth + "px";
+        chatPanel.style.flexShrink = "0";
+      }
+
+      const handle = document.createElement("div");
+      handle.className = "kce-chat-resize-handle";
+      chatPanel.appendChild(handle);
+
+      let dragging = false;
+      let startX = 0;
+      let startWidth = 0;
+      let saveTimeout = null;
+
+      handle.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragging = true;
+        startX = e.clientX;
+        startWidth = chatPanel.offsetWidth;
+        handle.classList.add("kce-active");
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!dragging) return;
+        const delta = startX - e.clientX;
+        const newWidth = Math.max(280, Math.min(startWidth + delta, window.innerWidth * 0.6));
+        chatPanel.style.width = newWidth + "px";
+        chatPanel.style.minWidth = newWidth + "px";
+        chatPanel.style.maxWidth = newWidth + "px";
+        chatPanel.style.flexShrink = "0";
+      });
+
+      window.addEventListener("mouseup", () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove("kce-active");
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        const finalWidth = chatPanel.offsetWidth;
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+          chrome.storage.sync.set({ [CHAT_WIDTH_KEY]: finalWidth });
+        }, 300);
+      });
+
+      console.log("[KCE] Chat resize handle připojen k:", chatPanel.tagName, chatPanel.className?.slice(0, 60));
+      return true;
+    };
+
+    if (await trySetup()) return;
+    const delays = [500, 1500, 3000, 6000, 10000];
+    for (const ms of delays) {
+      await new Promise((r) => setTimeout(r, ms));
+      if (await trySetup()) return;
+    }
+  }
+
   async function init() {
     injectIntoAllShadowRoots();
     const settings = await getSettings();
@@ -498,11 +970,18 @@
     tagChatMessages();
     observeChat();
     setupPauseOnHover(settings);
+    setupModDragHandle(settings);
+    setupChatResize();
+    [300, 800, 1500, 3000, 6000].forEach((ms) => setTimeout(() => {
+      nudgeVirtualizerAndScroll();
+      logChatDiagnostic();
+    }, ms));
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "sync" && changes[STORAGE_KEY]) {
       applyEnhancements(changes[STORAGE_KEY].newValue || defaultSettings);
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 50);
     }
   });
 

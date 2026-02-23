@@ -12,11 +12,27 @@
     <p class="subtitle">Vylepšení vzhledu chatu na Kick.com</p>
 
     <div class="settings">
+      <div class="range-setting">
+        <div class="range-header">
+          <span class="label">Velikost písma v chatu</span>
+          <span class="range-value" id="chatFontSizeValue">13px</span>
+        </div>
+        <input type="range" id="chatFontSize" min="11" max="18" step="0.5" value="13">
+      </div>
+
       <label class="toggle">
         <input type="checkbox" id="messageSpacing" checked>
         <span class="slider"></span>
-        <span class="label">Větší mezery mezi zprávami</span>
+        <span class="label">Upravit mezery mezi zprávami</span>
       </label>
+
+      <div class="range-setting sub-setting" id="spacingSliderWrap">
+        <div class="range-header">
+          <span class="label">Velikost mezer</span>
+          <span class="range-value" id="messageSpacingPxValue">5px</span>
+        </div>
+        <input type="range" id="messageSpacingPx" min="0" max="12" step="1" value="5">
+      </div>
 
       <label class="toggle">
         <input type="checkbox" id="visualSeparation" checked>
@@ -39,7 +55,7 @@
       <label class="toggle">
         <input type="checkbox" id="usernameHighlight" checked>
         <span class="slider"></span>
-        <span class="label">Zvýraznění uživatelských jmen</span>
+        <span class="label">Zvýraznění odkazů v chatu</span>
       </label>
 
       <label class="toggle">
@@ -47,10 +63,15 @@
         <span class="slider"></span>
         <span class="label">Pozastavit chat při najetí myší</span>
       </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="modDragHandle" checked>
+        <span class="slider"></span>
+        <span class="label">Moderátorský úchop (táhnutí doprava)</span>
+      </label>
     </div>
 
-    <p class="footer">Obnov stránku na Kick.com pro aplikaci změn.</p>
-    <p class="footer"><strong>Nic se nemění?</strong> Otevři DevTools (F12) → Konzole → spusť soubor <code>inspect-chat-dom.js</code> a pošli výstup.</p>
+    <p class="footer">Změny se projeví okamžitě.</p>
   </div>
   <script src="popup.js"></script>
 </body>

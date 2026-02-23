@@ -1,93 +1,68 @@
 /**
  * Kick Chat Enhancer - Stylové vylepšení
- * Inspirováno Twitch chatem - lepší čitelnost a vizuální oddělení
  * :host-context() umožňuje fungování i uvnitř Shadow DOM
  */
 
 /* ===== HLAVNÍ PŘEPÍNAČE (řízeno content scriptem) ===== */
 :root {
-  --kce-message-spacing: 0;
-  --kce-visual-separation: 0;
-  --kce-reply-styling: 0;
-  --kce-emote-size: 0;
-  --kce-username-highlight: 0;
+  --kce-font-size: 13px;
+  --kce-msg-spacing: 0px;
 }
 
-[data-kce-message-spacing="1"] {
-  --kce-message-spacing: 1;
-}
-[data-kce-visual-separation="1"] {
-  --kce-visual-separation: 1;
-}
-[data-kce-reply-styling="1"] {
-  --kce-reply-styling: 1;
-}
-[data-kce-emote-size="1"] {
-  --kce-emote-size: 1;
-}
-[data-kce-username-highlight="1"] {
-  --kce-username-highlight: 1;
-}
+/* =========================================================================
+   MEZERY MEZI ZPRÁVAMI
+   Kick virtualizér používá position:absolute + translateY na div[data-index].
+   Padding na těchto prvcích ZVÝŠÍ jejich measured height, a virtualizér
+   přepočítá translateY pozice. Pravidla platí JEN když je spacing zapnutý.
+   ========================================================================= */
 
-/* ===== MEZERY MEZI ZPRÁVAMI (Twitch styl – maximálně kompaktní) ===== */
+[data-kce-message-spacing="1"] div[data-index],
 [data-kce-message-spacing="1"] [data-chat-entry],
-[data-kce-message-spacing="1"] .kce-message,
-:host-context([data-kce-message-spacing="1"]) [data-chat-entry],
-:host-context([data-kce-message-spacing="1"]) .kce-message {
-  padding-top: 2px !important;
-  padding-bottom: 2px !important;
-  margin-top: 1px !important;
-  margin-bottom: 1px !important;
-  line-height: 1.35 !important;
-  min-height: unset !important;
+[data-kce-message-spacing="1"] .kce-message {
+  padding-top: var(--kce-msg-spacing) !important;
+  padding-bottom: var(--kce-msg-spacing) !important;
 }
 
-/* ===== VIZUÁLNÍ ODDĚLENÍ ZPRÁV (Twitch styl – jemný hover) ===== */
+/* ===== VLASTNÍ VELIKOST PÍSMA V CHATU ===== */
+div[data-index],
+div[data-index] span,
+div[data-index] a,
+div[data-index] p,
+div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
+[data-chat-entry],
+[data-chat-entry] span,
+[data-chat-entry] a,
+[data-chat-entry] p,
+[data-chat-entry] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
+.kce-message,
+.kce-message span,
+.kce-message a,
+.kce-message p,
+.kce-message div:not(.kce-mod-handle):not(.kce-mod-handle-column),
+[class*="chatroom"] [class*="scroll"] span,
+[class*="chatroom"] [class*="scroll"] a,
+[class*="chatroom"] [class*="scroll"] p {
+  font-size: var(--kce-font-size) !important;
+}
+
+/* ===== VIZUÁLNÍ ODDĚLENÍ ZPRÁV (hover efekt) ===== */
 [data-kce-visual-separation="1"] [data-chat-entry],
 [data-kce-visual-separation="1"] .kce-message,
+[data-kce-visual-separation="1"] div[data-index],
 :host-context([data-kce-visual-separation="1"]) [data-chat-entry],
 :host-context([data-kce-visual-separation="1"]) .kce-message {
-  padding-left: 6px !important;
-  padding-right: 6px !important;
-  margin-left: -6px !important;
-  margin-right: -6px !important;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
   border-radius: 4px !important;
   transition: background-color 0.15s ease !important;
 }
 
 [data-kce-visual-separation="1"] [data-chat-entry]:hover,
 [data-kce-visual-separation="1"] .kce-message:hover,
+[data-kce-visual-separation="1"] div[data-index]:hover,
 :host-context([data-kce-visual-separation="1"]) [data-chat-entry]:hover,
 :host-context([data-kce-visual-separation="1"]) .kce-message:hover {
   background-color: rgba(255, 255, 255, 0.04) !important;
-}
-
-/* Alternativní cílení - Kick může používat jiné třídy */
-[data-kce-visual-separation="1"] [class*="chat-entry"],
-[data-kce-visual-separation="1"] [class*="chatEntry"],
-[data-kce-visual-separation="1"] [class*="message-row"],
-:host-context([data-kce-visual-separation="1"]) [class*="chat-entry"],
-:host-context([data-kce-visual-separation="1"]) [class*="chatEntry"],
-:host-context([data-kce-visual-separation="1"]) [class*="message-row"] {
-  padding-left: 6px !important;
-  padding-right: 6px !important;
-  border-radius: 4px !important;
-}
-
-[data-kce-visual-separation="1"] [class*="chat-entry"]:hover,
-[data-kce-visual-separation="1"] [class*="chatEntry"]:hover,
-:host-context([data-kce-visual-separation="1"]) [class*="chat-entry"]:hover,
-:host-context([data-kce-visual-separation="1"]) [class*="chatEntry"]:hover {
-  background-color: rgba(255, 255, 255, 0.04) !important;
-}
-
-/* Redukce výchozích mezer Kick chatu */
-[data-kce-message-spacing="1"] [data-chat-entry] > div,
-[data-kce-message-spacing="1"] .kce-message > div,
-:host-context([data-kce-message-spacing="1"]) [data-chat-entry] > div,
-:host-context([data-kce-message-spacing="1"]) .kce-message > div {
-  margin-bottom: 0 !important;
-  padding-bottom: 0 !important;
 }
 
 /* ===== VYLEPŠENÍ ODPOVĚDÍ (Reply) ===== */
@@ -106,7 +81,7 @@
   margin-bottom: 4px !important;
 }
 
-/* ===== LIMIT VELIKOSTI EMOTŮ (konzistentní jako na Twitchi) ===== */
+/* ===== LIMIT VELIKOSTI EMOTŮ ===== */
 [data-kce-emote-size="1"] img[class*="emote"],
 [data-kce-emote-size="1"] img[data-emote-id],
 [data-kce-emote-size="1"] .gc-emote-c,
@@ -120,43 +95,130 @@
 }
 
 /* ===== ZVÝRAZNĚNÍ UŽIVATELSKÝCH JMEN ===== */
-[data-kce-username-highlight="1"] [class*="username"] span,
-[data-kce-username-highlight="1"] [class*="chat-username"],
-[data-kce-username-highlight="1"] [class*="user-name"],
-[data-kce-username-highlight="1"] a[class*="username"] {
-  font-weight: 600 !important;
+[data-kce-username-highlight="1"] div[data-index] a[href*="/"]:first-of-type,
+[data-kce-username-highlight="1"] [data-chat-entry] a[href*="/"]:first-of-type,
+[data-kce-username-highlight="1"] .kce-message a[href*="/"]:first-of-type,
+[data-kce-username-highlight="1"] [class*="chatroom"] a[class*="username"],
+[data-kce-username-highlight="1"] [class*="chatroom"] a[class*="chat-entry-username"] {
+  font-weight: 700 !important;
+  text-shadow: 0 0 6px currentColor !important;
 }
 
-/* Cílení na strukturu [ikona] [jméno]: - první barevný span před dvojtečkou */
-[data-kce-username-highlight="1"] [data-chat-entry] > div > span:first-of-type,
-[data-kce-username-highlight="1"] [data-chat-entry] [class*="message"] span:first-of-type {
-  font-weight: 600 !important;
+/* ===== SKRYTÍ HORIZONTÁLNÍHO SCROLLBARU PŘI SWIPE ===== */
+[class*="chatroom"] [class*="scroll"] > div,
+[class*="chat"] [class*="scroll"] > div,
+[class*="chat"] [class*="messages"] > div,
+#chatroom-messages > div {
+  overflow: hidden !important;
 }
 
-/* ===== OBECNÉ VYLEPŠENÍ ČITELNOSTI ===== */
-/* Kontejner chatu - kompaktní padding */
+/* ===== POSUVNÍK (SCROLLBAR) ===== */
 [class*="chatroom"] [class*="scroll"],
-[class*="chat-room"] [class*="scroll"],
-[class*="chat"] [class*="messages"] {
-  padding: 6px 8px !important;
-  gap: 0 !important;
+[class*="chat"] [class*="scroll"],
+[class*="chat"] [class*="messages"],
+#chatroom-messages {
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(255,255,255,0.12) transparent !important;
+  overflow-x: hidden !important;
 }
 
-/* Posuvník - viditelnější */
-[class*="chat"] ::-webkit-scrollbar {
-  width: 8px !important;
+::-webkit-scrollbar {
+  width: 12px !important;
 }
-
-[class*="chat"] ::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.2) !important;
-  border-radius: 4px !important;
+::-webkit-scrollbar-track {
+  background: transparent !important;
 }
-
-[class*="chat"] ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2) !important;
-  border-radius: 4px !important;
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+  border-radius: 6px !important;
+  min-height: 40px !important;
 }
-
-[class*="chat"] ::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22) !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+}
+::-webkit-scrollbar-thumb:active {
   background: rgba(255, 255, 255, 0.3) !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+}
+
+/* ===== MODERÁTORSKÝ DRAG HANDLE ===== */
+.kce-mod-handle {
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 14px !important;
+  min-height: 20px !important;
+  cursor: grab !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: rgba(255, 255, 255, 0.4) !important;
+  font-size: 10px !important;
+  font-weight: bold !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  z-index: 9999 !important;
+  pointer-events: auto !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-sizing: border-box !important;
+  transition: background 0.15s, color 0.15s !important;
+}
+.kce-mod-handle:hover {
+  color: rgba(255, 255, 255, 0.8) !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+.kce-mod-handle:active {
+  cursor: grabbing !important;
+}
+
+/* Swipe pozadí za zprávou */
+.kce-swipe-bg {
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  color: #fff !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6) !important;
+  border-radius: 4px !important;
+  pointer-events: none !important;
+  z-index: -1 !important;
+  transition: background 0.1s !important;
+}
+
+/* Zpráva při tažení – plynulý pohyb */
+div[data-index] {
+  transition: none;
+}
+
+/* ===== CHAT PANEL RESIZE HANDLE ===== */
+.kce-chat-resize-handle {
+  position: absolute !important;
+  left: -3px !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 6px !important;
+  cursor: col-resize !important;
+  z-index: 10000 !important;
+  background: transparent !important;
+  transition: background 0.15s ease !important;
+}
+
+.kce-chat-resize-handle:hover,
+.kce-chat-resize-handle.kce-active {
+  background: rgba(145, 71, 255, 0.4) !important;
+}
+
+.kce-chat-resize-handle.kce-active {
+  background: rgba(145, 71, 255, 0.6) !important;
 }
