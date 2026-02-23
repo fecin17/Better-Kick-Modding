@@ -241,21 +241,25 @@
     return { channel, messageId, username };
   }
 
+  function formatDuration(s) {
+    if (s < 60) return Math.round(s) + "s";
+    if (s < 3600) return Math.round(s / 60) + " min";
+    if (s < 86400) return Math.round(s / 3600) + " h";
+    return Math.round(s / 86400) + " d";
+  }
+
   function getSwipeAction(pct) {
     if (pct < 0.05) return null;
     if (pct < 0.25) return { action: "delete", label: "Smazat", color: "#dc2626" };
     if (pct < 0.75) {
       const t = (pct - 0.25) / 0.5;
-      const durations = [
-        { s: 30, label: "30s" }, { s: 60, label: "1 min" }, { s: 300, label: "5 min" },
-        { s: 600, label: "10 min" }, { s: 1800, label: "30 min" }, { s: 3600, label: "1 h" },
-        { s: 86400, label: "1 den" }, { s: 604800, label: "7 dní" }, { s: 1209600, label: "14 dní" },
-      ];
-      const idx = Math.min(Math.floor(t * durations.length), durations.length - 1);
-      const d = durations[idx];
+      const minS = 30;
+      const maxS = 1209600;
+      const raw = minS * Math.pow(maxS / minS, t);
+      const secs = Math.round(raw);
       const r = Math.round(40 + t * 160);
       const g = Math.round(160 - t * 120);
-      return { action: "timeout", label: "Timeout " + d.label, durationSeconds: d.s, color: "rgb(" + r + "," + g + ",30)" };
+      return { action: "timeout", label: "Timeout " + formatDuration(secs), durationSeconds: secs, color: "rgb(" + r + "," + g + ",30)" };
     }
     return { action: "ban", label: "PERMANENT BAN", color: "#7f1d1d" };
   }
