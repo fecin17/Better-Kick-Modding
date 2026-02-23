@@ -11,6 +11,12 @@
       "css": ["styles/chat-enhancements.css"],
       "js": ["content/content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.kick.com/*"],
+      "js": ["content/page-bridge.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [

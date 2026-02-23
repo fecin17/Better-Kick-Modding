@@ -209,8 +209,13 @@
     if (root instanceof ShadowRoot) injectCssIntoRoot(root);
     const handle = document.createElement("div");
     handle.className = "kce-mod-handle";
+    handle.setAttribute("data-kce-internal", "1");
     handle.textContent = "\u22EE";
-    entryEl.appendChild(handle);
+    requestAnimationFrame(() => {
+      if (!entryEl.querySelector(".kce-mod-handle")) {
+        entryEl.appendChild(handle);
+      }
+    });
   }
 
   function findEntry(startEl) {
@@ -222,23 +227,144 @@
     return null;
   }
 
+  function extractFrameworkData(el) {
+    const nodes = [];
+    const walk = (n, d) => {
+      if (d > 6 || !n) return;
+      for (const c of n.children || []) walk(c, d + 1);
+      nodes.push(n);
+    };
+    walk(el, 0);
+    let p = el.parentElement;
+    for (let i = 0; i < 5 && p && p !== document.body; i++, p = p.parentElement) nodes.push(p);
+
+    for (const node of nodes) {
+      let keys;
+      try { keys = Object.keys(node); } catch (_) { continue; }
+
+      const reactKey = keys.find(k => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+      if (reactKey) {
+        let fiber = node[reactKey];
+        for (let i = 0; i < 30 && fiber; i++, fiber = fiber.return) {
+          const mp = fiber.memoizedProps;
+          if (!mp || typeof mp !== "object") continue;
+          let mid = mp.messageId || mp.message_id || mp.chatMessageId || mp.msgId || null;
+          const nested = mp.message || mp.chatMessage || mp.msg || mp.data || mp.item || null;
+          if (!mid && nested && typeof nested === "object") mid = nested.id || nested.messageId || null;
+          if (!mid && mp.id) { const s = String(mp.id); if (/^[0-9a-f]{8}-/.test(s) || s.length > 10) mid = s; }
+          if (mid) {
+            const src = nested || mp;
+            return { messageId: String(mid), username: src.sender?.username || src.user?.username || src.username || null };
+          }
+        }
+      }
+
+      const vue = node.__vue__ || node.__vueParentComponent || node.__vue_app__;
+      if (vue) {
+        const search = (obj, depth) => {
+          if (!obj || depth > 3 || typeof obj !== "object") return null;
+          if (obj.messageId || obj.message_id) return { messageId: String(obj.messageId || obj.message_id), username: obj.sender?.username || obj.user?.username || obj.username || null };
+          if (obj.message?.id) return { messageId: String(obj.message.id), username: obj.message.sender?.username || obj.message.user?.username || null };
+          for (const k of Object.keys(obj)) {
+            if (k.startsWith("_") || k === "$" || k === "el") continue;
+            const r = search(obj[k], depth + 1);
+            if (r) return r;
+          }
+          return null;
+        };
+        const ctx = vue.ctx || vue.$data || vue._data || vue.setupState || vue;
+        const r = search(ctx, 0);
+        if (r) return r;
+        if (vue.proxy) { const r2 = search(vue.proxy, 0); if (r2) return r2; }
+        if (vue.props) { const r3 = search(vue.props, 0); if (r3) return r3; }
+      }
+    }
+    return null;
+  }
+
   function getMessageData(entryEl) {
     const channelMatch = window.location.pathname.match(/^\/([^/]+)/);
     const channel = channelMatch ? channelMatch[1] : null;
-    let messageId = entryEl.id?.replace(/^[^0-9]+/, "") || entryEl.dataset?.messageId || entryEl.dataset?.id || null;
-    if (!messageId && entryEl.dataset?.chatEntry && String(entryEl.dataset.chatEntry).match(/^\d+$/)) messageId = entryEl.dataset.chatEntry;
+
+    let messageId = entryEl.dataset?.messageId || entryEl.dataset?.id || null;
+    if (!messageId && entryEl.id) {
+      const cleaned = entryEl.id.replace(/^[^0-9a-f-]+/i, "");
+      if (cleaned.length > 8) messageId = cleaned;
+    }
+    if (!messageId && entryEl.dataset?.chatEntry) {
+      const ce = String(entryEl.dataset.chatEntry);
+      if (ce.length > 4) messageId = ce;
+    }
     if (!messageId) {
       const fromChild = entryEl.querySelector?.("[data-message-id], [data-id]");
       if (fromChild) messageId = fromChild.dataset?.messageId || fromChild.dataset?.id || null;
     }
-    const firstLink = entryEl.querySelector('a[href*="/"]');
+
     let username = null;
-    if (firstLink && firstLink.href) {
-      const m = firstLink.getAttribute("href").match(/\/([^/]+)\/?$/);
-      if (m) username = m[1];
+    const fw = extractFrameworkData(entryEl);
+    if (fw) {
+      if (!messageId && fw.messageId) messageId = fw.messageId;
+      if (fw.username) username = fw.username;
     }
-    if (!username && firstLink) username = (firstLink.textContent || "").trim().replace(/:$/, "");
-    return { channel, messageId, username };
+
+    if (!username) {
+      const usernameEl = entryEl.querySelector(
+        'a[class*="username"], a[class*="chat-entry-username"], a[data-chat-entry-user],' +
+        'span[class*="username"], button[class*="username"],' +
+        'a[class*="user-name"], span[class*="user-name"]'
+      );
+      if (usernameEl) {
+        const href = usernameEl.getAttribute?.("href");
+        if (href) { const m = href.match(/\/([^/]+)\/?$/); if (m) username = m[1]; }
+        if (!username) username = (usernameEl.textContent || "").trim().replace(/:$/, "");
+      }
+    }
+    if (!username) {
+      const links = entryEl.querySelectorAll("a[href]");
+      for (const link of links) {
+        const href = link.getAttribute("href") || "";
+        if (href.startsWith("http") && !href.includes("kick.com")) continue;
+        const m = href.match(/\/([A-Za-z][\w]{1,24})\/?$/);
+        if (m) { username = m[1]; break; }
+      }
+    }
+    if (!username) {
+      const styled = entryEl.querySelectorAll("span[style*='color'], span[class], a[class], button[class]");
+      for (const el of styled) {
+        if (el.children.length > 2) continue;
+        const t = (el.textContent || "").trim().replace(/:$/, "");
+        if (t.length >= 2 && t.length <= 25 && /^[A-Za-z]/.test(t) && /^[\w]+$/.test(t)) {
+          username = t;
+          break;
+        }
+      }
+    }
+
+    // --- DIAGNOSTIC (temporary) ---
+    if (!messageId || !username) {
+      const fwKeys = new Set();
+      const scanFw = (n, d) => {
+        if (d > 4) return;
+        try { Object.keys(n).filter(k => k.startsWith("__")).forEach(k => fwKeys.add(k.slice(0, 35))); } catch (_) {}
+        for (const c of n.children || []) scanFw(c, d + 1);
+      };
+      scanFw(entryEl, 0);
+      const allData = {};
+      const scanData = (n, d) => {
+        if (d > 4) return;
+        if (n.dataset) for (const [k, v] of Object.entries(n.dataset)) { if (k !== "kceInternal") allData[k] = v; }
+        for (const c of n.children || []) scanData(c, d + 1);
+      };
+      scanData(entryEl, 0);
+      console.log("[KCE] DIAG entry tag:", entryEl.tagName, "classes:", entryEl.className?.slice(0, 100));
+      console.log("[KCE] DIAG framework keys:", [...fwKeys]);
+      console.log("[KCE] DIAG data-* attrs:", allData);
+      console.log("[KCE] DIAG innerHTML (500):", entryEl.innerHTML?.slice(0, 500));
+      console.log("[KCE] DIAG links:", [...entryEl.querySelectorAll("a")].map(a => ({ href: a.getAttribute("href"), text: a.textContent?.trim()?.slice(0, 30) })));
+    }
+
+    console.log("[KCE] Message data:", { channel, messageId, username, fwFound: !!fw });
+    return { channel, messageId, username, messageText: (entryEl.textContent || "").trim().slice(0, 200) };
   }
 
   function formatDuration(s) {
@@ -246,6 +372,87 @@
     if (s < 3600) return Math.round(s / 60) + " min";
     if (s < 86400) return Math.round(s / 3600) + " h";
     return Math.round(s / 86400) + " d";
+  }
+
+  function getXsrfToken() {
+    const match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  function buildApiHeaders(withContentType) {
+    const h = { "Accept": "application/json, text/plain, */*" };
+    const xsrf = getXsrfToken();
+    if (xsrf) h["X-XSRF-TOKEN"] = xsrf;
+    if (withContentType) h["Content-Type"] = "application/json";
+    return h;
+  }
+
+  function pageContextFetch(url, options) {
+    return new Promise((resolve) => {
+      const id = "kce_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+      const handler = (e) => {
+        if (e.detail?.id === id) {
+          document.removeEventListener("kce-fetch-response", handler);
+          resolve(e.detail);
+        }
+      };
+      document.addEventListener("kce-fetch-response", handler);
+      document.dispatchEvent(new CustomEvent("kce-fetch-request", {
+        detail: { id, url, options }
+      }));
+      setTimeout(() => {
+        document.removeEventListener("kce-fetch-response", handler);
+        resolve({ ok: false, status: 0, text: "bridge timeout - reload page" });
+      }, 15000);
+    });
+  }
+
+  function showModToast(message, success) {
+    const existing = document.querySelector(".kce-mod-toast");
+    if (existing) existing.remove();
+    const toast = document.createElement("div");
+    toast.className = "kce-mod-toast";
+    toast.textContent = message;
+    toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:100000;" +
+      "padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;" +
+      "box-shadow:0 4px 12px rgba(0,0,0,0.4);pointer-events:none;opacity:0;transition:opacity 0.3s;" +
+      "background:" + (success ? "rgba(34,197,94,0.95)" : "rgba(239,68,68,0.95)") + ";";
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => { toast.style.opacity = "1"; });
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      setTimeout(() => toast.remove(), 400);
+    }, 2500);
+  }
+
+  function showBanConfirmation(username, onConfirm) {
+    const existing = document.querySelector(".kce-ban-confirm");
+    if (existing) existing.remove();
+    const overlay = document.createElement("div");
+    overlay.className = "kce-ban-confirm";
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:100001;" +
+      "background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;";
+    const box = document.createElement("div");
+    box.style.cssText = "background:#1a1a2e;border:1px solid rgba(255,255,255,0.15);border-radius:12px;" +
+      "padding:24px 32px;text-align:center;color:#fff;font-size:14px;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,0.5);";
+    const safeUser = (username || "?").replace(/[<>&"]/g, "");
+    box.innerHTML = '<div style="font-size:18px;font-weight:700;margin-bottom:12px;color:#ef4444;">\u26A0 Permanent Ban</div>' +
+      '<div style="margin-bottom:20px;">Opravdu chce\u0161 zabanovat <strong style="color:#f87171;">' + safeUser + '</strong> natrvalo?</div>' +
+      '<div style="display:flex;gap:12px;justify-content:center;">' +
+      '<button class="kce-ban-yes" style="padding:8px 24px;border-radius:6px;border:none;background:#ef4444;color:#fff;font-weight:600;cursor:pointer;font-size:13px;">Zabanovat</button>' +
+      '<button class="kce-ban-no" style="padding:8px 24px;border-radius:6px;border:none;background:rgba(255,255,255,0.1);color:#ccc;font-weight:600;cursor:pointer;font-size:13px;">Zru\u0161it</button>' +
+      '</div>';
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    box.querySelector(".kce-ban-no").addEventListener("click", close);
+    box.querySelector(".kce-ban-yes").addEventListener("click", () => {
+      close();
+      onConfirm().then((ok) => {
+        showModToast(ok ? "U\u017eivatel " + safeUser + " zabanov\u00e1n" : "Chyba p\u0159i banov\u00e1n\u00ed " + safeUser, ok);
+      });
+    });
   }
 
   function getSwipeAction(pct) {
@@ -277,7 +484,7 @@
         return;
       }
       tagChatMessages();
-    }, 2000);
+    }, 5000);
 
     let drag = null;
 
@@ -364,43 +571,108 @@
 
   async function runModerationApi(payload) {
     const { action, channel, messageId, username, durationSeconds } = payload;
-    if (!channel) return;
+    if (!channel) return { ok: false, error: "chybí channel" };
     const base = "https://kick.com";
+    const xsrf = getXsrfToken();
+    const slug = username ? username.toLowerCase() : null;
+    console.log("[KCE] API:", action, "ch:", channel, "user:", slug, "xsrf:", xsrf ? "yes" : "NO!");
+
+    async function tryFetch(url, opts) {
+      const fetchOpts = { credentials: "include", ...opts };
+      const r = await pageContextFetch(url, fetchOpts);
+      console.log("[KCE]", r.ok ? "OK" : "FAIL", r.status, url.replace(base, ""), r.ok ? "" : r.text?.slice(0, 150));
+      return r;
+    }
+
     try {
-      if (action === "delete" && messageId) {
-        const crRes = await fetch(base + "/api/v2/channels/" + encodeURIComponent(channel) + "/chatroom", { credentials: "include" });
-        const crData = await crRes.json();
+      if (action === "delete") {
+        const crRes = await pageContextFetch(base + "/api/v2/channels/" + encodeURIComponent(channel) + "/chatroom", {
+          credentials: "include", headers: buildApiHeaders(false),
+        });
+        if (!crRes.ok) return { ok: false, error: "chatroom fetch " + crRes.status };
+        let crData;
+        try { crData = JSON.parse(crRes.text); } catch (_) { return { ok: false, error: "chatroom parse error" }; }
         const chatroomId = crData?.id ?? crData?.chatroom?.id;
-        if (chatroomId) {
-          const r = await fetch(base + "/api/v2/chatrooms/" + chatroomId + "/messages/" + encodeURIComponent(messageId), { method: "DELETE", credentials: "include" });
-          if (r.ok) console.log("[KCE] Zpráva smazána.");
-          else console.warn("[KCE] Smazání zprávy:", r.status, await r.text());
+        if (!chatroomId) return { ok: false, error: "chatroom ID nenalezeno" };
+
+        let targetId = messageId;
+        if (!targetId && slug) {
+          console.log("[KCE] Delete: hledám zprávu, chatroomId:", chatroomId, "crData keys:", Object.keys(crData));
+          const channelId = crData?.channel?.id || crData?.channel_id || crData?.chatroom?.channel_id;
+          const urls = [
+            base + "/api/v2/channels/" + encodeURIComponent(channel) + "/messages",
+            channelId ? base + "/api/v2/channels/" + channelId + "/messages" : null,
+            base + "/api/v2/chatrooms/" + chatroomId + "/messages",
+            base + "/api/internal/v1/channels/" + encodeURIComponent(channel) + "/chatroom",
+          ].filter(Boolean);
+          for (const url of urls) {
+            try {
+              const res = await pageContextFetch(url, { credentials: "include", headers: buildApiHeaders(false) });
+              console.log("[KCE] Delete msg fetch:", res.status, url.replace(base, ""), res.ok ? "(ok, " + res.text?.length + " bytes)" : res.text?.slice(0, 100));
+              if (!res.ok) continue;
+              const body = JSON.parse(res.text);
+              const msgs = body?.data?.messages || body?.data || body?.messages || body?.chatroom?.messages || (Array.isArray(body) ? body : []);
+              if (!Array.isArray(msgs) || !msgs.length) {
+                console.log("[KCE] Delete: no msgs array, body keys:", typeof body === "object" ? Object.keys(body) : typeof body);
+                continue;
+              }
+              console.log("[KCE] Delete: found", msgs.length, "msgs, first sender:", JSON.stringify(msgs[0]?.sender || msgs[0]?.user || {}).slice(0, 100));
+              const match = msgs.find(m => (m.sender?.username || m.sender?.slug || m.user?.username || m.username || "").toLowerCase() === slug);
+              if (match?.id) {
+                targetId = String(match.id);
+                console.log("[KCE] Delete: matched msg ID:", targetId);
+                break;
+              }
+            } catch (e) { console.log("[KCE] Delete endpoint error:", e.message); }
+          }
         }
-      } else if (action === "ban" && username) {
-        const r = await fetch(base + "/api/v2/channels/" + encodeURIComponent(channel) + "/bans", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: username }),
+        if (!targetId) return { ok: false, error: "message ID nenalezeno (zkus timeout místo delete)" };
+        const r = await tryFetch(base + "/api/v2/chatrooms/" + chatroomId + "/messages/" + encodeURIComponent(targetId), {
+          method: "DELETE", headers: buildApiHeaders(false),
         });
-        if (r.ok) console.log("[KCE] Uživatel zabanován.");
-        else console.warn("[KCE] Ban:", r.status, await r.text());
-      } else if (action === "timeout" && username && durationSeconds) {
-        const r = await fetch(base + "/api/v1/channels/" + encodeURIComponent(channel) + "/mute-user", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: username, duration: durationSeconds }),
+        return { ok: r.ok, error: r.ok ? "" : r.status + " " + (r.text || "").slice(0, 80) };
+      }
+
+      if (action === "ban") {
+        if (!slug) return { ok: false, error: "chybí username" };
+        const r = await tryFetch(base + "/api/v2/channels/" + encodeURIComponent(channel) + "/bans", {
+          method: "POST", headers: buildApiHeaders(true),
+          body: JSON.stringify({ banned_username: slug, permanent: true }),
         });
-        if (r.ok) console.log("[KCE] Timeout " + durationSeconds + "s.");
-        else console.warn("[KCE] Timeout:", r.status, await r.text());
+        return { ok: r.ok, error: r.ok ? "" : r.status + " " + r.text.slice(0, 80) };
+      }
+
+      if (action === "timeout") {
+        if (!slug || !durationSeconds) return { ok: false, error: "chybí username/duration" };
+        const durMin = Math.max(1, Math.ceil(durationSeconds / 60));
+
+        const r1 = await tryFetch(base + "/api/v2/channels/" + encodeURIComponent(channel) + "/bans", {
+          method: "POST", headers: buildApiHeaders(true),
+          body: JSON.stringify({ banned_username: slug, duration: durMin }),
+        });
+        if (r1.ok) return { ok: true, error: "" };
+
+        const r2 = await tryFetch(base + "/api/v1/channels/" + encodeURIComponent(channel) + "/mute-user", {
+          method: "POST", headers: buildApiHeaders(true),
+          body: JSON.stringify({ username: slug, duration: durationSeconds }),
+        });
+        if (r2.ok) return { ok: true, error: "" };
+
+        return { ok: false, error: "v2:" + r1.status + " " + r1.text.slice(0, 60) + " | v1:" + r2.status + " " + r2.text.slice(0, 60) };
       }
     } catch (err) {
       console.warn("[KCE] Moderation error:", err);
+      return { ok: false, error: String(err).slice(0, 100) };
     }
+    return { ok: false, error: "neznámá akce" };
   }
 
   function executeModAction(info, data) {
+    if (!data.channel) { showModToast("Nepodařilo se zjistit kanál", false); return; }
+    if (!data.username && !data.messageId) {
+      showModToast("Nepodařilo se zjistit uživatele ani ID zprávy", false);
+      return;
+    }
     const payload = {
       action: info.action,
       channel: data.channel,
@@ -408,35 +680,68 @@
       username: data.username,
       durationSeconds: info.durationSeconds || null,
     };
-    runModerationApi(payload);
+    if (info.action === "ban") {
+      showBanConfirmation(data.username, async () => {
+        const res = await runModerationApi(payload);
+        return res.ok;
+      });
+    } else {
+      runModerationApi(payload).then((res) => {
+        let msg;
+        if (info.action === "delete") {
+          msg = res.ok ? "Zpráva smazána" : "Chyba: " + (res.error || "smazání selhalo");
+        } else {
+          msg = res.ok ? "Timeout " + formatDuration(info.durationSeconds) + " – " + data.username : "Chyba: " + (res.error || "timeout selhal");
+        }
+        showModToast(msg, res.ok);
+      });
+    }
   }
 
   function observeChat() {
+    let tagPending = false;
+    const scheduleTag = () => {
+      if (tagPending) return;
+      tagPending = true;
+      requestAnimationFrame(() => {
+        tagPending = false;
+        tagChatMessages();
+      });
+    };
+
+    const isOwnMutation = (node) =>
+      node?.classList?.contains?.("kce-mod-handle") ||
+      node?.classList?.contains?.("kce-pause-banner") ||
+      node?.classList?.contains?.("kce-swipe-bg");
+
     const observer = new MutationObserver((mutations) => {
+      let dominated = true;
       for (const mutation of mutations) {
-        mutation.addedNodes?.forEach((node) => {
-          if (node?.nodeType !== Node.ELEMENT_NODE) return;
-          if (node.dataset?.chatEntry) addEnhancementClass(node, "message");
-          if (node.querySelectorAll) {
-            node.querySelectorAll("[data-chat-entry]").forEach((el) => addEnhancementClass(el, "message"));
+        if (mutation.type === "attributes" && mutation.attributeName === "class" &&
+            mutation.target?.className?.includes?.("kce-")) continue;
+
+        const added = mutation.addedNodes;
+        if (added) {
+          for (let i = 0; i < added.length; i++) {
+            const node = added[i];
+            if (node?.nodeType !== Node.ELEMENT_NODE) continue;
+            if (isOwnMutation(node)) continue;
+            dominated = false;
+            if (node.dataset?.chatEntry) addEnhancementClass(node, "message");
+            if (node.querySelectorAll) {
+              node.querySelectorAll("[data-chat-entry]").forEach((el) => addEnhancementClass(el, "message"));
+            }
+            if (node.shadowRoot) injectCssIntoRoot(node.shadowRoot);
           }
-          if (node.shadowRoot) {
-            injectCssIntoRoot(node.shadowRoot);
-          }
-        });
+        }
       }
-      tagChatMessages();
+      if (!dominated) scheduleTag();
     });
 
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: false });
 
-    setTimeout(tagChatMessages, 100);
-    setTimeout(tagChatMessages, 500);
-    setTimeout(tagChatMessages, 1000);
-    setTimeout(tagChatMessages, 2000);
-    setTimeout(tagChatMessages, 4000);
-    setTimeout(tagChatMessages, 8000);
-    setTimeout(tagChatMessages, 12000);
+    const delays = [100, 500, 1000, 2000, 5000, 10000];
+    delays.forEach((ms) => setTimeout(tagChatMessages, ms));
   }
 
   function querySelectorDeep(root, selector) {
@@ -893,7 +1198,9 @@
   }
 
   async function setupChatResize() {
-    if (document.querySelector(".kce-chat-resize-handle")) return;
+    const existing = document.querySelector(".kce-chat-resize-handle");
+    if (existing && existing.isConnected) return;
+    if (existing) existing.remove();
 
     const trySetup = async () => {
       const chatPanel = findChatPanel();
@@ -901,11 +1208,6 @@
 
       const parent = chatPanel.parentElement;
       if (!parent) return false;
-
-      const cs = getComputedStyle(chatPanel);
-      if (cs.position === "static") {
-        chatPanel.style.position = "relative";
-      }
 
       const result = await chrome.storage.sync.get(CHAT_WIDTH_KEY);
       const savedWidth = result[CHAT_WIDTH_KEY];
@@ -918,7 +1220,7 @@
 
       const handle = document.createElement("div");
       handle.className = "kce-chat-resize-handle";
-      chatPanel.appendChild(handle);
+      chatPanel.insertAdjacentElement("beforebegin", handle);
 
       let dragging = false;
       let startX = 0;
@@ -959,7 +1261,7 @@
         }, 300);
       });
 
-      console.log("[KCE] Chat resize handle připojen k:", chatPanel.tagName, chatPanel.className?.slice(0, 60));
+      console.log("[KCE] Chat resize handle připojen (sibling):", chatPanel.tagName, chatPanel.className?.slice(0, 60));
       return true;
     };
 
@@ -980,6 +1282,10 @@
     setupPauseOnHover(settings);
     setupModDragHandle(settings);
     setupChatResize();
+    setInterval(() => {
+      const h = document.querySelector(".kce-chat-resize-handle");
+      if (!h || !h.isConnected) setupChatResize();
+    }, 8000);
     [300, 800, 1500, 3000, 6000].forEach((ms) => setTimeout(() => {
       nudgeVirtualizerAndScroll();
       logChatDiagnostic();

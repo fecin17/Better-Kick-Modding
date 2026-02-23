@@ -194,15 +194,16 @@ div[data-index] {
 
 /* ===== CHAT PANEL RESIZE HANDLE ===== */
 .kce-chat-resize-handle {
-  position: absolute !important;
-  left: -3px !important;
-  top: 0 !important;
-  bottom: 0 !important;
   width: 6px !important;
+  margin-left: -3px !important;
+  margin-right: -3px !important;
   cursor: col-resize !important;
   z-index: 10000 !important;
   background: transparent !important;
   transition: background 0.15s ease !important;
+  flex-shrink: 0 !important;
+  align-self: stretch !important;
+  position: relative !important;
 }
 
 .kce-chat-resize-handle:hover,
