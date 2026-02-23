@@ -712,6 +712,18 @@
       node?.classList?.contains?.("kce-pause-banner") ||
       node?.classList?.contains?.("kce-swipe-bg");
 
+    const isEmoteExtensionNode = (node) => {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+      const cls = node.className;
+      if (typeof cls === "string" && /seventv|7tv|bttv|ffz/i.test(cls)) return true;
+      if (node.tagName === "IMG") {
+        const src = node.src || "";
+        if (/cdn\.7tv\.app|7tv\.|betterttv|frankerfacez/i.test(src)) return true;
+      }
+      if (node.closest?.("[class*='seventv'], [class*='7tv'], [data-seventv]")) return true;
+      return false;
+    };
+
     const observer = new MutationObserver((mutations) => {
       let dominated = true;
       for (const mutation of mutations) {
@@ -723,7 +735,7 @@
           for (let i = 0; i < added.length; i++) {
             const node = added[i];
             if (node?.nodeType !== Node.ELEMENT_NODE) continue;
-            if (isOwnMutation(node)) continue;
+            if (isOwnMutation(node) || isEmoteExtensionNode(node)) continue;
             dominated = false;
             if (node.dataset?.chatEntry) addEnhancementClass(node, "message");
             if (node.querySelectorAll) {

@@ -25,23 +25,23 @@
 
 /* ===== VLASTNÍ VELIKOST PÍSMA V CHATU ===== */
 div[data-index],
-div[data-index] span,
-div[data-index] a,
-div[data-index] p,
-div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
+div[data-index] span:not([class*="seventv"]):not([class*="7tv"]),
+div[data-index] a:not([class*="seventv"]):not([class*="7tv"]),
+div[data-index] p:not([class*="seventv"]):not([class*="7tv"]),
+div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*="seventv"]):not([class*="7tv"]),
 [data-chat-entry],
-[data-chat-entry] span,
-[data-chat-entry] a,
-[data-chat-entry] p,
-[data-chat-entry] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
+[data-chat-entry] span:not([class*="seventv"]):not([class*="7tv"]),
+[data-chat-entry] a:not([class*="seventv"]):not([class*="7tv"]),
+[data-chat-entry] p:not([class*="seventv"]):not([class*="7tv"]),
+[data-chat-entry] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*="seventv"]):not([class*="7tv"]),
 .kce-message,
-.kce-message span,
-.kce-message a,
-.kce-message p,
-.kce-message div:not(.kce-mod-handle):not(.kce-mod-handle-column),
-[class*="chatroom"] [class*="scroll"] span,
-[class*="chatroom"] [class*="scroll"] a,
-[class*="chatroom"] [class*="scroll"] p {
+.kce-message span:not([class*="seventv"]):not([class*="7tv"]),
+.kce-message a:not([class*="seventv"]):not([class*="7tv"]),
+.kce-message p:not([class*="seventv"]):not([class*="7tv"]),
+.kce-message div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*="seventv"]):not([class*="7tv"]),
+[class*="chatroom"] [class*="scroll"] span:not([class*="seventv"]):not([class*="7tv"]),
+[class*="chatroom"] [class*="scroll"] a:not([class*="seventv"]):not([class*="7tv"]),
+[class*="chatroom"] [class*="scroll"] p:not([class*="seventv"]):not([class*="7tv"]) {
   font-size: var(--kce-font-size) !important;
 }
 
@@ -82,12 +82,12 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
 }
 
 /* ===== LIMIT VELIKOSTI EMOTŮ ===== */
-[data-kce-emote-size="1"] img[class*="emote"],
-[data-kce-emote-size="1"] img[data-emote-id],
-[data-kce-emote-size="1"] .gc-emote-c,
-:host-context([data-kce-emote-size="1"]) img[class*="emote"],
-:host-context([data-kce-emote-size="1"]) img[data-emote-id],
-:host-context([data-kce-emote-size="1"]) .gc-emote-c {
+[data-kce-emote-size="1"] img[class*="emote"]:not([class*="seventv"]):not([class*="7tv"]),
+[data-kce-emote-size="1"] img[data-emote-id]:not([class*="seventv"]):not([class*="7tv"]),
+[data-kce-emote-size="1"] .gc-emote-c:not([class*="seventv"]):not([class*="7tv"]),
+:host-context([data-kce-emote-size="1"]) img[class*="emote"]:not([class*="seventv"]):not([class*="7tv"]),
+:host-context([data-kce-emote-size="1"]) img[data-emote-id]:not([class*="seventv"]):not([class*="7tv"]),
+:host-context([data-kce-emote-size="1"]) .gc-emote-c:not([class*="seventv"]):not([class*="7tv"]) {
   max-height: 28px !important;
   max-width: 28px !important;
   vertical-align: middle !important;

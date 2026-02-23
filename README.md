@@ -20,6 +20,10 @@ Webová rozšíření pro vylepšení vzhledu a čitelnosti chatu na **Kick.com*
 4. Klikni **Načíst rozbalené**
 5. Vyber složku `kick extension`
 
+### Vlastní ikonky
+
+Ikony rozšíření (v liště a v nastavení) můžeš nahradit vlastními. Do složky `icons/` přidej soubory **icon16.png** (16×16 px), **icon48.png** (48×48 px) a **icon128.png** (128×128 px). Podrobnosti jsou ve složce `icons/` v souboru README.md. Po úpravě ikon v rozšíření klikni na **Obnovit**.
+
 ## Použití
 
 1. Otevři stream na **kick.com**

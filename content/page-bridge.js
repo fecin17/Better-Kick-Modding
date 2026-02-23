@@ -9,48 +9,48 @@
   const messageStore = new Map();
 
   const OrigWebSocket = window.WebSocket;
-  window.WebSocket = function (...args) {
-    const ws = new OrigWebSocket(...args);
-    ws.addEventListener("message", (event) => {
-      try {
-        const parsed = JSON.parse(event.data);
-        let inner = parsed.data;
-        if (typeof inner === "string") inner = JSON.parse(inner);
-        if (inner && inner.id && (inner.sender || inner.user || inner.chatMessage)) {
-          const msg = inner.chatMessage || inner;
-          const username = (msg.sender?.username || msg.sender?.slug || msg.user?.username || "").toLowerCase();
-          if (username) {
-            if (!messageStore.has(username)) messageStore.set(username, []);
-            const list = messageStore.get(username);
-            list.push({ id: String(msg.id), time: Date.now(), content: (msg.content || "").slice(0, 100) });
-            if (list.length > 200) list.splice(0, list.length - 200);
+  window.WebSocket = new Proxy(OrigWebSocket, {
+    construct(target, args) {
+      const ws = new target(...args);
+      ws.addEventListener("message", (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          let inner = parsed.data;
+          if (typeof inner === "string") inner = JSON.parse(inner);
+          if (inner && inner.id && (inner.sender || inner.user || inner.chatMessage)) {
+            const msg = inner.chatMessage || inner;
+            const username = (msg.sender?.username || msg.sender?.slug || msg.user?.username || "").toLowerCase();
+            if (username) {
+              if (!messageStore.has(username)) messageStore.set(username, []);
+              const list = messageStore.get(username);
+              list.push({ id: String(msg.id), time: Date.now(), content: (msg.content || "").slice(0, 100) });
+              if (list.length > 200) list.splice(0, list.length - 200);
+            }
           }
-        }
-      } catch (_) {}
-    });
-    return ws;
-  };
-  window.WebSocket.prototype = OrigWebSocket.prototype;
-  window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
-  window.WebSocket.OPEN = OrigWebSocket.OPEN;
-  window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
-  window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+        } catch (_) {}
+      });
+      return ws;
+    }
+  });
 
   const origFetch = window.fetch;
-  window.fetch = async function (input, init) {
-    const url = typeof input === "string" ? input : input?.url || "";
-    if (url.includes("/api/") && init?.headers) {
-      try {
-        const h = init.headers;
-        if (h instanceof Headers) {
-          h.forEach((v, k) => { capturedHeaders[k.toLowerCase()] = v; });
-        } else if (typeof h === "object" && !Array.isArray(h)) {
-          for (const [k, v] of Object.entries(h)) { capturedHeaders[k.toLowerCase()] = v; }
-        }
-      } catch (_) {}
+  window.fetch = new Proxy(origFetch, {
+    apply(target, thisArg, args) {
+      const [input, init] = args;
+      const url = typeof input === "string" ? input : input?.url || "";
+      if (url.includes("/api/") && init?.headers) {
+        try {
+          const h = init.headers;
+          if (h instanceof Headers) {
+            h.forEach((v, k) => { capturedHeaders[k.toLowerCase()] = v; });
+          } else if (typeof h === "object" && !Array.isArray(h)) {
+            for (const [k, v] of Object.entries(h)) { capturedHeaders[k.toLowerCase()] = v; }
+          }
+        } catch (_) {}
+      }
+      return Reflect.apply(target, thisArg, args);
     }
-    return origFetch.apply(this, arguments);
-  };
+  });
 
   document.addEventListener("kce-fetch-request", async (e) => {
     const { id, url, options } = e.detail || {};
