@@ -304,6 +304,7 @@
       const info = getSwipeAction(pct);
       const entry = drag.entry;
       const bg = drag.bg;
+      const scrollCt = drag.scrollCt;
       const data = getMessageData(entry);
       entry.style.setProperty("transform", "translateY(" + drag.origTY + "px)", "important");
       entry.style.transition = "transform 0.2s ease";
@@ -314,6 +315,7 @@
         entry.style.transition = "";
         entry.style.removeProperty("z-index");
         if (bg.parentNode) bg.remove();
+        if (scrollCt) scrollCt.style.removeProperty("overflow-x");
       }, 300);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
@@ -348,9 +350,11 @@
         "transform:translateY(" + origTY + "px);z-index:1;transition:background 0.1s;";
       const vParent = entry.parentElement;
       if (vParent) vParent.appendChild(bg);
+      const scrollCt = vParent?.parentElement;
+      if (scrollCt) scrollCt.style.setProperty("overflow-x", "clip", "important");
 
       entry.style.setProperty("z-index", "10", "important");
-      drag = { entry, startX: e.clientX, entryWidth: entry.offsetWidth, origTY, bg, lastPct: 0 };
+      drag = { entry, startX: e.clientX, entryWidth: entry.offsetWidth, origTY, bg, scrollCt, lastPct: 0 };
       document.body.style.cursor = "grabbing";
       document.body.style.userSelect = "none";
       window.addEventListener("mousemove", onMove);

@@ -94,22 +94,14 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
   object-fit: contain !important;
 }
 
-/* ===== ZVÝRAZNĚNÍ UŽIVATELSKÝCH JMEN ===== */
-[data-kce-username-highlight="1"] div[data-index] a[href*="/"]:first-of-type,
-[data-kce-username-highlight="1"] [data-chat-entry] a[href*="/"]:first-of-type,
-[data-kce-username-highlight="1"] .kce-message a[href*="/"]:first-of-type,
+/* ===== ZVÝRAZNĚNÍ ODKAZŮ V CHATU ===== */
+[data-kce-username-highlight="1"] [class*="chatroom"] div[data-index] a[href*="/"]:first-of-type,
+[data-kce-username-highlight="1"] [class*="chatroom"] [data-chat-entry] a[href*="/"]:first-of-type,
+[data-kce-username-highlight="1"] [class*="chatroom"] .kce-message a[href*="/"]:first-of-type,
 [data-kce-username-highlight="1"] [class*="chatroom"] a[class*="username"],
 [data-kce-username-highlight="1"] [class*="chatroom"] a[class*="chat-entry-username"] {
   font-weight: 700 !important;
   text-shadow: 0 0 6px currentColor !important;
-}
-
-/* ===== SKRYTÍ HORIZONTÁLNÍHO SCROLLBARU PŘI SWIPE ===== */
-[class*="chatroom"] [class*="scroll"] > div,
-[class*="chat"] [class*="scroll"] > div,
-[class*="chat"] [class*="messages"] > div,
-#chatroom-messages > div {
-  overflow: hidden !important;
 }
 
 /* ===== POSUVNÍK (SCROLLBAR) ===== */
@@ -119,7 +111,6 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
 #chatroom-messages {
   scrollbar-width: thin !important;
   scrollbar-color: rgba(255,255,255,0.12) transparent !important;
-  overflow-x: hidden !important;
 }
 
 ::-webkit-scrollbar {
@@ -163,7 +154,7 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column),
   font-weight: bold !important;
   user-select: none !important;
   -webkit-user-select: none !important;
-  z-index: 9999 !important;
+  z-index: 1 !important;
   pointer-events: auto !important;
   background: rgba(255, 255, 255, 0.06) !important;
   border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
