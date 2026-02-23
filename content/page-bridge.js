@@ -1,11 +1,42 @@
 /**
- * KCE Page Bridge - běží v MAIN world (kontext stránky)
- * Zachytává auth headery z Kick API volání a používá je pro moderaci.
+ * KCE Page Bridge - běží v MAIN world na document_start
+ * 1. Zachytává auth headery z fetch volání Kicku
+ * 2. Zachytává message ID z WebSocket (Pusher) zpráv
+ * 3. Provádí authenticated fetch na žádost content scriptu
  */
 (function () {
   const capturedHeaders = {};
-  const origFetch = window.fetch;
+  const messageStore = new Map();
 
+  const OrigWebSocket = window.WebSocket;
+  window.WebSocket = function (...args) {
+    const ws = new OrigWebSocket(...args);
+    ws.addEventListener("message", (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        let inner = parsed.data;
+        if (typeof inner === "string") inner = JSON.parse(inner);
+        if (inner && inner.id && (inner.sender || inner.user || inner.chatMessage)) {
+          const msg = inner.chatMessage || inner;
+          const username = (msg.sender?.username || msg.sender?.slug || msg.user?.username || "").toLowerCase();
+          if (username) {
+            if (!messageStore.has(username)) messageStore.set(username, []);
+            const list = messageStore.get(username);
+            list.push({ id: String(msg.id), time: Date.now(), content: (msg.content || "").slice(0, 100) });
+            if (list.length > 200) list.splice(0, list.length - 200);
+          }
+        }
+      } catch (_) {}
+    });
+    return ws;
+  };
+  window.WebSocket.prototype = OrigWebSocket.prototype;
+  window.WebSocket.CONNECTING = OrigWebSocket.CONNECTING;
+  window.WebSocket.OPEN = OrigWebSocket.OPEN;
+  window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
+  window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
+
+  const origFetch = window.fetch;
   window.fetch = async function (input, init) {
     const url = typeof input === "string" ? input : input?.url || "";
     if (url.includes("/api/") && init?.headers) {
@@ -39,9 +70,7 @@
           if (!reqHeaders[k]) reqHeaders[k] = capturedHeaders[k];
         }
       }
-
       const opts = { ...options, headers: reqHeaders, credentials: "include" };
-      console.log("[KCE-Bridge] fetch", url.replace("https://kick.com", ""), "auth:", !!reqHeaders["Authorization"], "headers:", Object.keys(reqHeaders));
       const r = await origFetch(url, opts);
       const text = await r.text();
       document.dispatchEvent(new CustomEvent("kce-fetch-response", {
@@ -54,9 +83,20 @@
     }
   });
 
-  document.addEventListener("kce-get-auth-status", () => {
-    document.dispatchEvent(new CustomEvent("kce-auth-status", {
-      detail: { headers: Object.keys(capturedHeaders), hasAuth: !!capturedHeaders["authorization"] }
+  document.addEventListener("kce-lookup-message", (e) => {
+    const { id, username, content } = e.detail || {};
+    if (!id) return;
+    const slug = (username || "").toLowerCase();
+    const list = messageStore.get(slug) || [];
+    let match = null;
+    if (content && list.length) {
+      const clean = content.replace(/\s+/g, " ").trim().slice(0, 80);
+      match = [...list].reverse().find(m => clean.includes(m.content.slice(0, 30)) || m.content.includes(clean.slice(0, 30)));
+    }
+    if (!match && list.length) match = list[list.length - 1];
+    console.log("[KCE-Bridge] lookup:", slug, "stored:", list.length, "match:", match?.id || "none");
+    document.dispatchEvent(new CustomEvent("kce-lookup-result", {
+      detail: { id, messageId: match?.id || null, storedCount: list.length }
     }));
   });
 })();

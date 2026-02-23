@@ -387,6 +387,26 @@
     return h;
   }
 
+  function lookupMessageId(username, content) {
+    return new Promise((resolve) => {
+      const id = "kce_lu_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+      const handler = (e) => {
+        if (e.detail?.id === id) {
+          document.removeEventListener("kce-lookup-result", handler);
+          resolve(e.detail);
+        }
+      };
+      document.addEventListener("kce-lookup-result", handler);
+      document.dispatchEvent(new CustomEvent("kce-lookup-message", {
+        detail: { id, username, content }
+      }));
+      setTimeout(() => {
+        document.removeEventListener("kce-lookup-result", handler);
+        resolve({ messageId: null, storedCount: 0 });
+      }, 2000);
+    });
+  }
+
   function pageContextFetch(url, options) {
     return new Promise((resolve) => {
       const id = "kce_" + Date.now() + "_" + Math.random().toString(36).slice(2);
@@ -597,36 +617,13 @@
 
         let targetId = messageId;
         if (!targetId && slug) {
-          console.log("[KCE] Delete: hledám zprávu, chatroomId:", chatroomId, "crData keys:", Object.keys(crData));
-          const channelId = crData?.channel?.id || crData?.channel_id || crData?.chatroom?.channel_id;
-          const urls = [
-            base + "/api/v2/channels/" + encodeURIComponent(channel) + "/messages",
-            channelId ? base + "/api/v2/channels/" + channelId + "/messages" : null,
-            base + "/api/v2/chatrooms/" + chatroomId + "/messages",
-            base + "/api/internal/v1/channels/" + encodeURIComponent(channel) + "/chatroom",
-          ].filter(Boolean);
-          for (const url of urls) {
-            try {
-              const res = await pageContextFetch(url, { credentials: "include", headers: buildApiHeaders(false) });
-              console.log("[KCE] Delete msg fetch:", res.status, url.replace(base, ""), res.ok ? "(ok, " + res.text?.length + " bytes)" : res.text?.slice(0, 100));
-              if (!res.ok) continue;
-              const body = JSON.parse(res.text);
-              const msgs = body?.data?.messages || body?.data || body?.messages || body?.chatroom?.messages || (Array.isArray(body) ? body : []);
-              if (!Array.isArray(msgs) || !msgs.length) {
-                console.log("[KCE] Delete: no msgs array, body keys:", typeof body === "object" ? Object.keys(body) : typeof body);
-                continue;
-              }
-              console.log("[KCE] Delete: found", msgs.length, "msgs, first sender:", JSON.stringify(msgs[0]?.sender || msgs[0]?.user || {}).slice(0, 100));
-              const match = msgs.find(m => (m.sender?.username || m.sender?.slug || m.user?.username || m.username || "").toLowerCase() === slug);
-              if (match?.id) {
-                targetId = String(match.id);
-                console.log("[KCE] Delete: matched msg ID:", targetId);
-                break;
-              }
-            } catch (e) { console.log("[KCE] Delete endpoint error:", e.message); }
-          }
+          const msgText = payload.messageText || "";
+          console.log("[KCE] Delete: lookup přes WebSocket store pro:", slug);
+          const lookup = await lookupMessageId(slug, msgText);
+          console.log("[KCE] Delete: lookup result:", lookup);
+          if (lookup.messageId) targetId = lookup.messageId;
         }
-        if (!targetId) return { ok: false, error: "message ID nenalezeno (zkus timeout místo delete)" };
+        if (!targetId) return { ok: false, error: "Zpráva nenalezena (uživatel: " + slug + "). Zpráva musí přijít přes chat než ji lze smazat." };
         const r = await tryFetch(base + "/api/v2/chatrooms/" + chatroomId + "/messages/" + encodeURIComponent(targetId), {
           method: "DELETE", headers: buildApiHeaders(false),
         });
@@ -679,6 +676,7 @@
       messageId: data.messageId,
       username: data.username,
       durationSeconds: info.durationSeconds || null,
+      messageText: data.messageText || "",
     };
     if (info.action === "ban") {
       showBanConfirmation(data.username, async () => {
