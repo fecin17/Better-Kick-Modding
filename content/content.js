@@ -70,6 +70,14 @@
     }
   }
 
+  /** Označí odkazy na URL (http/https) ve zprávě třídou pro zvýraznění v CSS. */
+  function tagLinkHighlights(entryEl) {
+    if (!entryEl || !entryEl.querySelectorAll) return;
+    entryEl.querySelectorAll('a[href^="http"]').forEach((a) => {
+      if (!a.classList.contains("kce-link-highlight")) a.classList.add("kce-link-highlight");
+    });
+  }
+
   function applyEnhancements(settings) {
     const html = document.documentElement;
     html.dataset.kceMessageSpacing = settings.messageSpacing ? "1" : "0";
@@ -148,12 +156,14 @@
     querySelectorAllDeep(effectiveBase, "[data-chat-entry]").forEach((el) => {
       addEnhancementClass(el, "message");
       ensureModHandle(el);
+      tagLinkHighlights(el);
     });
 
     // 2. Třídy chat-entry, chatEntry, message-row
     querySelectorAllDeep(effectiveBase, "[class*='chat-entry'], [class*='chatEntry'], [class*='message-row']").forEach((el) => {
       addEnhancementClass(el, "message");
       ensureModHandle(el);
+      tagLinkHighlights(el);
     });
 
     // Pokud jsme na stránce bez chatu (kanál/klipy/videa), dál nepokračovat
@@ -172,6 +182,7 @@
         if (hasColon || hasEmote) {
           addEnhancementClass(el, "message");
           ensureModHandle(el);
+          tagLinkHighlights(el);
         }
       });
     }
@@ -197,6 +208,7 @@
         seen.add(el);
         addEnhancementClass(el, "message");
         ensureModHandle(el);
+        tagLinkHighlights(el);
       }
     }
 
@@ -216,6 +228,7 @@
           seen.add(parent);
           addEnhancementClass(parent, "message");
           ensureModHandle(parent);
+          tagLinkHighlights(parent);
         }
       }
     });
@@ -232,6 +245,7 @@
           seen.add(el);
           addEnhancementClass(el, "message");
           ensureModHandle(el);
+          tagLinkHighlights(el);
         }
       }
     });
@@ -777,9 +791,15 @@
             if (node?.nodeType !== Node.ELEMENT_NODE) continue;
             if (isOwnMutation(node) || isEmoteExtensionNode(node)) continue;
             dominated = false;
-            if (node.dataset?.chatEntry) addEnhancementClass(node, "message");
+            if (node.dataset?.chatEntry) {
+              addEnhancementClass(node, "message");
+              tagLinkHighlights(node);
+            }
             if (node.querySelectorAll) {
-              node.querySelectorAll("[data-chat-entry]").forEach((el) => addEnhancementClass(el, "message"));
+              node.querySelectorAll("[data-chat-entry]").forEach((el) => {
+                addEnhancementClass(el, "message");
+                tagLinkHighlights(el);
+              });
             }
             if (node.shadowRoot) injectCssIntoRoot(node.shadowRoot);
           }

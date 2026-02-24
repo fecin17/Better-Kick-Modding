@@ -95,6 +95,7 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*
 }
 
 /* ===== ZVÝRAZNĚNÍ ODKAZŮ V CHATU ===== */
+/* Uživatelská jména (profilové odkazy) */
 [data-kce-username-highlight="1"] [class*="chatroom"] div[data-index] a[href*="/"]:first-of-type,
 [data-kce-username-highlight="1"] [class*="chatroom"] [data-chat-entry] a[href*="/"]:first-of-type,
 [data-kce-username-highlight="1"] [class*="chatroom"] .kce-message a[href*="/"]:first-of-type,
@@ -102,6 +103,16 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*
 [data-kce-username-highlight="1"] [class*="chatroom"] a[class*="chat-entry-username"] {
   font-weight: 700 !important;
   text-shadow: 0 0 6px currentColor !important;
+}
+
+/* URL odkazy v textu zprávy – třída .kce-link-highlight se přidává z content.js */
+[data-kce-username-highlight="1"] .kce-link-highlight,
+:host-context([data-kce-username-highlight="1"]) .kce-link-highlight {
+  color: #7dd3fc !important;
+  font-weight: 600 !important;
+  text-decoration: underline !important;
+  text-decoration-color: rgba(125, 211, 252, 0.6) !important;
+  text-shadow: 0 0 8px rgba(125, 211, 252, 0.4) !important;
 }
 
 /* ===== POSUVNÍK (SCROLLBAR) ===== */

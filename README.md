@@ -1,51 +1,103 @@
 # Kick Chat Enhancer
 
-Webová rozšíření pro vylepšení vzhledu a čitelnosti chatu na **Kick.com**, inspirované chatem na Twitchi.
+Rozšíření pro prohlížeč (Chrome, Edge), které vylepšuje vzhled a čitelnost chatu na **[Kick.com](https://kick.com)**. Inspirováno chatem na Twitchi – větší mezery, vizuální oddělení zpráv, zvýraznění odkazů a další nastavitelné úpravy.
 
-## Rozdíly oproti výchozímu Kick chatu
+---
 
-| Výchozí Kick | S rozšířením |
-|--------------|--------------|
-| Malé mezery mezi zprávami | Větší vertikální rozestupy |
-| Chybí vizuální oddělení | Hover efekt a oddělení zpráv |
-| Odpovědi splývají | Barevné zvýraznění a odsazení |
-| Příliš velké emoty | Limit velikosti emotů (28px) |
-| Jména bez důrazu | Tučné zvýraznění uživatelských jmen |
+## Funkce
 
-## Instalace (Chrome / Edge)
+| Funkce | Popis |
+|--------|--------|
+| **Mezery mezi zprávami** | Nastavitelná vertikální mezera mezi zprávami pro lepší čitelnost |
+| **Vizuální oddělení** | Jemný hover efekt na řádcích chatu pro snazší skenování |
+| **Styling odpovědí** | Zvýraznění bloků „Replying to…“ (barva, odsazení) |
+| **Velikost emotů** | Omezení výšky/šířky emotů (např. 28px) pro konzistentní vzhled |
+| **Zvýraznění odkazů** | Tučné zvýraznění uživatelských jmen a barevné zvýraznění URL odkazů v textu |
+| **Velikost písma** | Nastavitelná velikost písma v chatu (11–18 px) |
+| **Pozastavení při hoveru** | Při najetí myší na chat lze pozastavit scrollování |
+| **Moderátorský úchop** | Táhnutí zprávy doprava pro moderátorské akce |
 
-1. Stáhni nebo naklonuj tento adresář
-2. Otevři `chrome://extensions/`
-3. Zapni **Režim vývojáře** (vpravo nahoře)
-4. Klikni **Načíst rozbalené**
-5. Vyber složku `kick extension`
+Všechny funkce lze zapínat a vypínat v popup okně rozšíření; nastavení se ukládá a synchronizuje (Chrome sync).
 
-### Vlastní ikonky
+---
 
-Ikony rozšíření (v liště a v nastavení) můžeš nahradit vlastními. Do složky `icons/` přidej soubory **icon16.png** (16×16 px), **icon48.png** (48×48 px) a **icon128.png** (128×128 px). Podrobnosti jsou ve složce `icons/` v souboru README.md. Po úpravě ikon v rozšíření klikni na **Obnovit**.
+## Požadavky
+
+- **Prohlížeč:** Chrome nebo Edge (Manifest V3)
+- **Stránky:** `https://*.kick.com/*` (live stream s chatem)
+
+---
+
+## Instalace
+
+1. **Stáhnout repozitář**  
+   `git clone https://github.com/<váš-účet>/kick-extension.git`  
+   nebo stáhnout ZIP a rozbalit.
+
+2. **Otevřít stránku rozšíření**  
+   - Chrome: `chrome://extensions/`  
+   - Edge: `edge://extensions/`
+
+3. **Zapnout režim vývojáře** (přepínač v pravém horním rohu).
+
+4. **Načíst rozbalené rozšíření**  
+   Tlačítko **„Načíst rozbalené“** → vybrat složku s projektem (ta, kde leží `manifest.json`).
+
+5. Otevřít stream na Kick.com – rozšíření se na stránkách Kick aktivuje automaticky.
+
+---
 
 ## Použití
 
-1. Otevři stream na **kick.com**
-2. Rozšíření se automaticky aktivuje
-3. Klikni na ikonu rozšíření v liště pro zapnutí/vypnutí jednotlivých funkcí
+- Po otevření streamu na **kick.com** se vylepšení chatu aplikují sama.
+- Klik na **ikonu rozšíření** v liště prohlížeče otevře nastavení (popup).
+- Jednotlivé funkce lze zapínat a vypínat zaškrtávacími políčky; změny se projeví ihned (případně po obnovení stránky).
 
-## Nastavení (popup)
+---
 
-- **Větší mezery mezi zprávami** – zlepší čitelnost při rychlém proudu chatu
-- **Vizuální oddělení zpráv** – jemný hover efekt pro lepší skenování
-- **Lepší styling odpovědí** – zvýraznění „Replying to…“
-- **Limit velikosti emotů** – sjednocení velikosti emotů
-- **Zvýraznění uživatelských jmen** – tučné písmo pro jména
+## Struktura projektu
 
-## Plánované funkce (moderátorské nástroje)
+```
+├── manifest.json          # Konfigurace rozšíření (Manifest V3)
+├── content/
+│   ├── content.js         # Hlavní logika – injekce stylů, detekce chatu, mod. nástroje
+│   └── page-bridge.js     # Bridge pro komunikaci s stránkou
+├── styles/
+│   └── chat-enhancements.css
+├── popup/
+│   ├── popup.html
+│   ├── popup.css
+│   └── popup.js           # UI nastavení a ukládání do chrome.storage
+└── icons/                 # Ikony 16, 48, 128 px
+```
 
-- Kontextové menu při kliknutí na zprávu/uživatele
-- Rychlé akce: ban, timeout, smazání zprávy
-- Zvýraznění zpráv od moderátorů/streamera
-- Případně další vylepšení podle zpětné vazby
+---
 
-## Poznámky
+## Přizpůsobení ikon
 
-- Po změně nastavení v popup obnov stránku na Kick.com.
-- Kick může měnit DOM strukturu – pokud něco nebude fungovat, napiš a selektory upravíme.
+V adresáři `icons/` lze nahradit výchozí ikony vlastními:
+
+- `icon16.png` (16×16 px)
+- `icon48.png` (48×48 px)
+- `icon128.png` (128×128 px)
+
+Po změně je vhodné v `chrome://extensions` u daného rozšíření kliknout na **Obnovit**.
+
+---
+
+## Kompatibilita a omezení
+
+- Kick může měnit DOM a třídy stránek; při úpravách jejich frontendu může dojít k nutnosti aktualizace selektorů v rozšíření.
+- Rozšíření neukládá hesla ani neposílá data mimo prohlížeč; používá pouze `chrome.storage` pro uložení preferencí.
+
+---
+
+## Přispívání
+
+Úpravy a pull requesty jsou vítány. U větších změn je vhodné nejdřív otevřít issue a popsat záměr.
+
+---
+
+## Licence
+
+Projekt je dostupný v tomto repozitáři; konkrétní licenci lze doplnit do souboru `LICENSE` nebo sekce v README.
