@@ -106,27 +106,63 @@
     return out;
   }
 
+  /**
+   * Spolehlivě najde kořenový element chatroom.
+   * Primárně kotví přes input "Send a message" – ten existuje POUZE v chatu,
+   * nikdy ve Stream Videos / Clips / Following sekci.
+   */
+  function findChatroomEl() {
+    // 1. Kotva přes "Send a message" input – nejspolehlivější
+    const inputs = document.querySelectorAll("input[placeholder], textarea[placeholder]");
+    for (const input of inputs) {
+      const ph = (input.getAttribute("placeholder") || "").toLowerCase();
+      if (!ph.includes("message") && !ph.includes("send") && !ph.includes("chat")) continue;
+      let p = input.parentElement;
+      for (let i = 0; i < 15 && p && p !== document.body; i++, p = p.parentElement) {
+        if (p.offsetHeight > 200) return p;
+      }
+    }
+    // 2. ID-based selectors
+    const byId = document.getElementById("chatroom") ||
+                 querySelectorDeep(document.body, "#chatroom") ||
+                 document.querySelector("[id*='chatroom']");
+    if (byId && byId.offsetHeight > 100) return byId;
+    // 3. Class-based selectors (méně spolehlivé – jako poslední možnost)
+    const byCls = document.querySelector("[class*='chatroom-container']") ||
+                  querySelectorDeep(document.body, "[class*='chatroom']") ||
+                  document.querySelector("[class*='chatroom']");
+    if (byCls && byCls.offsetHeight > 100) return byCls;
+    return null;
+  }
+
   function tagChatMessages(root = null) {
     const doc = document;
     const base = root ?? doc;
 
-    // 1. data-chat-entry (včetně uvnitř Shadow DOM)
-    querySelectorAllDeep(base, "[data-chat-entry]").forEach((el) => {
+    // Při volání z dokumentu vždy omezíme na chatroom element
+    // – zabrání tagování Stream Videos, Clips, Following listu apod.
+    const chatroomEl = base === doc ? findChatroomEl() : (base instanceof ShadowRoot ? base : base);
+    const effectiveBase = chatroomEl ?? base;
+
+    // 1. data-chat-entry
+    querySelectorAllDeep(effectiveBase, "[data-chat-entry]").forEach((el) => {
       addEnhancementClass(el, "message");
       ensureModHandle(el);
     });
 
-    // 2. Třídy obsahující chat-entry, chatEntry, message-row
-    querySelectorAllDeep(base, "[class*='chat-entry'], [class*='chatEntry'], [class*='message-row']").forEach((el) => {
+    // 2. Třídy chat-entry, chatEntry, message-row
+    querySelectorAllDeep(effectiveBase, "[class*='chat-entry'], [class*='chatEntry'], [class*='message-row']").forEach((el) => {
       addEnhancementClass(el, "message");
       ensureModHandle(el);
     });
 
-    // 3. Fallback: divy v scroll kontejneru chatu (včetně Shadow DOM)
-    const searchRoot = base === document ? document.body : base;
-    const chatScroll = base.querySelector?.("[class*='chat'][class*='scroll'], [class*='chatroom'][class*='scroll']")
-      || querySelectorDeep(searchRoot, "[class*='chat'][class*='scroll']")
-      || querySelectorDeep(searchRoot, "[class*='chatroom'][class*='scroll']");
+    // Pokud jsme na stránce bez chatu (kanál/klipy/videa), dál nepokračovat
+    if (base === doc && !chatroomEl) return;
+
+    // 3. Fallback: divy v scroll kontejneru chatu
+    const chatScrollRoot = chatroomEl ?? (base === doc ? document.body : base);
+    const chatScroll = querySelectorDeep(chatScrollRoot, "[class*='chat'][class*='scroll']")
+      || querySelectorDeep(chatScrollRoot, "[class*='chatroom'][class*='scroll']");
     if (chatScroll) {
       const candidates = chatScroll.querySelectorAll?.(":scope > div > div, :scope > div") ?? [];
       candidates.forEach((el) => {
@@ -140,7 +176,10 @@
       });
     }
 
-    const searchRootForIndex = base === document ? document.body : base;
+    // Sekce 4a/4b/5 prohledáváme VÝHRADNĚ uvnitř chatroom kontejneru
+    const searchRootForIndex = chatroomEl ?? (base !== doc ? base : null);
+    if (!searchRootForIndex) return;
+
     const seen = new Set();
     const skipText = /Send a message|Slow mode activated|^Chat$/i;
 
@@ -181,23 +220,20 @@
       }
     });
 
-    // 5. Uvnitř chatroomu: třídy message/line/entry/row (včetně Shadow DOM)
-    const chatrooms = querySelectorAllDeep(base, "[class*='chatroom']");
-    chatrooms.forEach((chatroom) => {
-      querySelectorAllDeep(chatroom, "[class*='message'], [class*='Message'], [class*='line'], [class*='Line'], [class*='entry'], [class*='Entry'], [class*='row'], [class*='Row']").forEach((el) => {
-        if (seen.has(el)) return;
-        const hasLink = el.querySelector?.("a[href]");
-        const hasColon = (el.textContent || "").includes(":");
-        const hasEmote = el.querySelector?.("img");
-        if ((hasLink && hasColon) || hasEmote) {
-          const reasonable = el.childNodes.length >= 1 && el.childNodes.length <= 80;
-          if (reasonable) {
-            seen.add(el);
-            addEnhancementClass(el, "message");
-            ensureModHandle(el);
-          }
+    // 5. Třídy message/line/entry/row – prohledáváme POUZE searchRootForIndex (chatroom)
+    querySelectorAllDeep(searchRootForIndex, "[class*='message'], [class*='Message'], [class*='line'], [class*='Line'], [class*='entry'], [class*='Entry'], [class*='row'], [class*='Row']").forEach((el) => {
+      if (seen.has(el)) return;
+      const hasLink = el.querySelector?.("a[href]");
+      const hasColon = (el.textContent || "").includes(":");
+      const hasEmote = el.querySelector?.("img");
+      if ((hasLink && hasColon) || hasEmote) {
+        const reasonable = el.childNodes.length >= 1 && el.childNodes.length <= 80;
+        if (reasonable) {
+          seen.add(el);
+          addEnhancementClass(el, "message");
+          ensureModHandle(el);
         }
-      });
+      }
     });
 
   }
@@ -504,7 +540,7 @@
         return;
       }
       tagChatMessages();
-    }, 5000);
+    }, 1500);
 
     let drag = null;
 
@@ -714,13 +750,17 @@
 
     const isEmoteExtensionNode = (node) => {
       if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
-      const cls = node.className;
-      if (typeof cls === "string" && /seventv|7tv|bttv|ffz/i.test(cls)) return true;
+      // Pouze IMG elementy z CDN 7TV/BTTV/FFZ nebo elementy s 7TV třídou přímo na sobě
+      // NEPOUÍVÁME node.closest – bylo příliš agresivní: pokud 7TV obalí celý chat
+      // do [data-seventv] kontejneru, každá nová zpráva by vypadala jako emote node
+      // a mutation observer by nikdy nezavolal scheduleTag → handle by se načítaly
+      // jen ze 5s intervalu místo okamžitě.
       if (node.tagName === "IMG") {
         const src = node.src || "";
         if (/cdn\.7tv\.app|7tv\.|betterttv|frankerfacez/i.test(src)) return true;
       }
-      if (node.closest?.("[class*='seventv'], [class*='7tv'], [data-seventv]")) return true;
+      const cls = typeof node.className === "string" ? node.className : "";
+      if (/seventv|7tv|bttv|ffz/i.test(cls)) return true;
       return false;
     };
 
@@ -866,20 +906,34 @@
   function setupPauseOnHover(settings) {
     if (!settings.pauseChatOnHover) return;
 
+    const pauseSetupDone = new WeakSet();
+
     const run = () => {
-      const chatEntry = querySelectorDeep(document.body, "[data-chat-entry]") || document.querySelector("[data-chat-entry]");
-      const scrollParents = chatEntry ? getAllScrollParents(chatEntry).filter((el) => el.scrollHeight > el.clientHeight) : [];
-      const chatroom = querySelectorDeep(document.body, "[class*='chatroom']") || document.querySelector("[class*='chatroom']");
-      const chatroomScroll = chatroom ? findAllScrollContainers(chatroom) : [];
-      const byId = document.getElementById("chatroom-messages") || querySelectorDeep(document.body, "#chatroom-messages");
-      const primaryScroll = scrollParents[0] || chatroomScroll[0] || getPrimaryScrollContainer(chatEntry);
+      // findChatroomEl() je zakotvena v "Send a message" inputu – nikdy nevrátí
+      // Stream Videos, Clips ani Following sekci jako chatroom
+      const chatroom = findChatroomEl();
+      if (!chatroom) return;
+
+      const chatEntry = querySelectorDeep(chatroom, "[data-chat-entry]") || chatroom.querySelector("[data-chat-entry]");
+      // Scroll parenty omezíme výhradně na kontejnery UVNITŘ chatroom
+      const scrollParents = chatEntry
+        ? getAllScrollParents(chatEntry).filter((el) => chatroom.contains(el) && el.scrollHeight > el.clientHeight)
+        : [];
+      const chatroomScroll = findAllScrollContainers(chatroom);
+      const byId = document.getElementById("chatroom-messages") || querySelectorDeep(chatroom, "#chatroom-messages");
+      const primaryScroll = scrollParents[0] || chatroomScroll[0] || (() => {
+        const sc = getPrimaryScrollContainer(chatEntry);
+        return (sc && chatroom.contains(sc)) ? sc : null;
+      })();
       let allScrollContainers = scrollParents.length ? scrollParents : (chatroomScroll.length ? chatroomScroll : (primaryScroll ? [primaryScroll] : []));
       if (byId && byId.scrollHeight > byId.clientHeight && !allScrollContainers.includes(byId)) {
         allScrollContainers = [byId, ...allScrollContainers];
       }
+      // Finální ochrana: pouze kontejnery uvnitř chatroom
+      allScrollContainers = allScrollContainers.filter((sc) => chatroom.contains(sc) || sc === chatroom);
       if (!allScrollContainers.length) return;
-      if (allScrollContainers[0].dataset.kcePauseSetup) return;
-      allScrollContainers[0].dataset.kcePauseSetup = "1";
+      if (pauseSetupDone.has(allScrollContainers[0])) return;
+      pauseSetupDone.add(allScrollContainers[0]);
 
       let paused = false;
       const pinnedMap = new Map();
@@ -891,13 +945,29 @@
       const KICK_PAUSE_TEXT_ALT = "paused for scrolling";
 
       const primaryScrollContainer = allScrollContainers[0];
+
+      // Banner je v document.body jako position:fixed – NEZASAHUJE do scrollHeight scroll
+      // kontejneru. Předchozí approach (position:sticky uvnitř kontejneru) způsoboval
+      // skok o ~35px při každém show/hide, protože display:none→block měnilo scrollHeight.
+      const existingBanner = document.querySelector(".kce-pause-banner");
+      if (existingBanner) existingBanner.remove();
       const banner = document.createElement("div");
       banner.className = "kce-pause-banner";
       banner.textContent = "Chat pozastaven";
       banner.style.cssText =
-        "display:none;position:sticky;top:0;left:0;right:0;z-index:100;padding:8px 12px;font-size:13px;color:#d0d0d8;background:rgba(35,40,43,0.97);border-bottom:1px solid rgba(255,255,255,0.12);text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.2);";
-      primaryScrollContainer.insertBefore(banner, primaryScrollContainer.firstChild);
-      const showBanner = () => { banner.style.display = "block"; };
+        "display:none;position:fixed;z-index:2147483647;pointer-events:none;" +
+        "padding:6px 12px;font-size:12px;color:#d0d0d8;background:rgba(20,22,25,0.93);" +
+        "border-bottom:1px solid rgba(255,255,255,0.10);text-align:center;" +
+        "box-shadow:0 2px 8px rgba(0,0,0,0.35);transition:opacity 0.15s;";
+      document.body.appendChild(banner);
+
+      const showBanner = () => {
+        const rect = primaryScrollContainer.getBoundingClientRect();
+        banner.style.top = rect.top + "px";
+        banner.style.left = rect.left + "px";
+        banner.style.width = rect.width + "px";
+        banner.style.display = "block";
+      };
       const hideBanner = () => { banner.style.display = "none"; };
 
       function applyScrollTopLock(el) {
@@ -928,16 +998,6 @@
 
       function applyScrollMethodsLock(el) {
         const origScrollTo = Element.prototype.scrollTo;
-      const origScrollIntoView = Element.prototype.scrollIntoView;
-      Element.prototype.scrollIntoView = function (...args) {
-        if (paused && allScrollContainers.some((sc) => sc.contains(this))) return;
-        return origScrollIntoView.apply(this, args);
-      };
-      scrollIntoViewRestore = () => {
-        Element.prototype.scrollIntoView = origScrollIntoView;
-        scrollIntoViewRestore = null;
-      };
-
         const origScrollBy = Element.prototype.scrollBy;
         const origScroll = Element.prototype.scroll;
         const forcePinned = () => origScrollTo.call(el, { top: pinnedMap.get(el) ?? 0, left: 0, behavior: "auto" });
@@ -962,8 +1022,11 @@
 
       function applyAllLocks() {
         allScrollContainers.forEach((el) => {
-          applyScrollTopLock(el);
-          applyScrollMethodsLock(el);
+          applyScrollTopLock(el);      // blokuje JS el.scrollTop = X (Kick auto-scroll)
+          applyScrollMethodsLock(el);  // blokuje scrollTo/scrollBy/scroll metody
+          // overflow-y:hidden NENASTAVUJEME – zablokoval by i manuální scroll kolečkem.
+          // Nativní browser scroll (wheel) prochází přes interní engine, obchází JS setter,
+          // proto funguje i s aktivním applyScrollTopLock.
         });
       }
 
@@ -974,9 +1037,29 @@
         scrollIntoViewRestore = null;
       }
 
+      // Rozlišujeme uživatelský scroll (wheel) od programatického (Kick auto-scroll).
+      // Nativní wheel scroll obchází JS setter – prochází přímo přes browser engine.
+      // Kickův programatický scroll jde přes setter (blokován) nebo scrollTo/scrollBy (blokováno).
+      // Jako záloha enforceScroll: pokud setter selhal a Kick přece jen posunul scrollTop,
+      // enforceScroll to opraví do jednoho snímku – ale POUZE pro pohyb DOLŮ (nové zprávy).
+      // Pohyb NAHORU (uživatel čte starší zprávy) se AKCEPTUJE a pinnedMap se aktualizuje.
+      let userScrollActive = false;
+      let userScrollTimer = null;
       allScrollContainers.forEach((el) => {
+        el.addEventListener("wheel", () => {
+          // Wheel event = uživatel manuálně scrolluje
+          userScrollActive = true;
+          clearTimeout(userScrollTimer);
+          userScrollTimer = setTimeout(() => { userScrollActive = false; }, 400);
+        }, { passive: true });
         el.addEventListener("scroll", () => {
-          if (paused) pinnedMap.set(el, el.scrollTop);
+          if (!paused) return;
+          if (userScrollActive) {
+            // Uživatel scrolluje kolečkem → akceptuj novou pozici jako nový pin
+            pinnedMap.set(el, el.scrollTop);
+          }
+          // Programatický scroll (Kick auto-scroll) → pinnedMap se NEzmění,
+          // enforceScroll to do jednoho snímku opraví zpět na pin
         }, { passive: true });
       });
 
@@ -985,9 +1068,14 @@
         if (!paused) return;
         try {
           allScrollContainers.forEach((el) => {
-            if (el.isConnected) {
-              const pin = pinnedMap.get(el);
-              if (pin !== undefined && el.scrollTop !== pin) el.scrollTop = pin;
+            if (!el.isConnected) return;
+            const pin = pinnedMap.get(el);
+            if (pin === undefined) return;
+            const current = el.scrollTop;
+            // Oprav jakoukoliv odchylku od pinu, pokud uživatel právě nescrolluje
+            // (wheel event označuje aktivní uživatelský scroll a pin se průběžně aktualizuje)
+            if (current !== pin && !userScrollActive) {
+              el.scrollTop = pin;
             }
           });
         } catch (_) {}
@@ -1097,9 +1185,25 @@
       const handleMouseEnter = () => {
         if (document.documentElement.dataset.kcePauseChatOnHover !== "1") return;
         paused = true;
-        allScrollContainers.forEach((sc) => pinnedMap.set(sc, sc.scrollTop));
+        // pinnedMap PŘED zámky – setter musí mít správnou hodnotu od první chvíle
+        allScrollContainers.forEach((sc) => {
+          const maxScroll = sc.scrollHeight - sc.clientHeight;
+          pinnedMap.set(sc, (maxScroll - sc.scrollTop < 80) ? maxScroll : sc.scrollTop);
+        });
         applyScrollIntoViewLock();
         applyAllLocks();
+        // Okamžitě zruš případné probíhající smooth-scroll animace Kicku
+        // (setter sám o sobě nestačí – animace mohla proběhnout ještě jeden snímek)
+        allScrollContainers.forEach((sc) => {
+          const pin = pinnedMap.get(sc);
+          if (pin !== undefined) {
+            try {
+              let proto = sc, d;
+              while (proto) { d = Object.getOwnPropertyDescriptor(proto, "scrollTop"); if (d?.set) break; proto = Object.getPrototypeOf(proto); }
+              if (d?.set) d.set.call(sc, pin);
+            } catch (_) {}
+          }
+        });
         showBanner();
         hideKickPauseBanner();
         if (!kickBannerHideInterval) {
@@ -1115,16 +1219,16 @@
     };
 
     run();
-    [500, 1500, 3500, 7000].forEach((ms) => setTimeout(run, ms));
+    [500, 1500, 3500, 7000, 12000, 20000].forEach((ms) => setTimeout(run, ms));
+    setInterval(run, 8000);
   }
 
   /**
-   * Po injekci CSS se změní velikosti řádků chatu.
-   * Virtualizér Kicku to potřebuje vědět – triggernem resize event
-   * a scrollneme chat dolů na nejnovější zprávy.
+   * Scrollne chat dolů na nejnovější zprávy.
+   * Resize event se NEZASÍLÁ opakovaně – způsoboval re-render virtualizéru Kicku,
+   * který mazal 7TV emoty injektované do zpráv. Jeden resize se posílá jen při init.
    */
   function nudgeVirtualizerAndScroll() {
-    window.dispatchEvent(new Event("resize"));
     setTimeout(() => {
       const chatEntry = querySelectorDeep(document.body, "[data-chat-entry]") || document.querySelector("[data-chat-entry]");
       const sc = chatEntry ? getPrimaryScrollContainer(chatEntry) : null;
@@ -1296,6 +1400,9 @@
       const h = document.querySelector(".kce-chat-resize-handle");
       if (!h || !h.isConnected) setupChatResize();
     }, 8000);
+    // Jeden resize event pro virtualizer (CSS změnilo výšky řádků) – jen jednou
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 300);
+    // Scroll na nejnovější zprávy v různých časech (bez resize – nezničíme 7TV emoty)
     [300, 800, 1500, 3000, 6000].forEach((ms) => setTimeout(() => {
       nudgeVirtualizerAndScroll();
       logChatDiagnostic();
