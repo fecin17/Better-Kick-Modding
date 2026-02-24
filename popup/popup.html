@@ -71,6 +71,43 @@
       </label>
     </div>
 
+    <div class="section-title">Moderation Assist</div>
+    <div class="settings">
+      <label class="toggle">
+        <input type="checkbox" id="maEnabled" checked>
+        <span class="slider"></span>
+        <span class="label">Aktivovat Moderation Assist</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="maCheckModOnly" checked>
+        <span class="slider"></span>
+        <span class="label">Jen na kanálech kde jsi moderátor</span>
+      </label>
+
+      <div class="ma-status-row" id="maStatusRow">
+        <span class="ma-status-label">Stav:</span>
+        <span class="ma-status-value" id="maStatusValue">Načítám…</span>
+        <button class="ma-re-enable" id="maReEnable" style="display:none">Zapnout nyní</button>
+      </div>
+
+      <div class="range-setting">
+        <div class="range-header">
+          <span class="label">Počet shodných zpráv za sebou</span>
+          <span class="range-value" id="maTriggerConsecValue">3</span>
+        </div>
+        <input type="range" id="maTriggerConsec" min="2" max="6" step="1" value="3">
+      </div>
+
+      <div class="range-setting">
+        <div class="range-header">
+          <span class="label">Auto-zavřít popup za (s)</span>
+          <span class="range-value" id="maAutoCloseValue">15s</span>
+        </div>
+        <input type="range" id="maAutoClose" min="5" max="60" step="5" value="15">
+      </div>
+    </div>
+
     <p class="footer">Změny se projeví okamžitě.</p>
   </div>
   <script src="popup.js"></script>

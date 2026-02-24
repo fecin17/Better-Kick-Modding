@@ -1,0 +1,19 @@
+# Lokální / citlivé
+.env
+.env.local
+.env.*.local
+*.pem
+secrets.*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logy / build (pokud přidáte)
+*.log
+dist/
+build/

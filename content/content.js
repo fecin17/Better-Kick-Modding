@@ -746,6 +746,496 @@
     }
   }
 
+  // =====================================================
+  //  MODERATION ASSIST  v2
+  // =====================================================
+
+  const MA_KEY = "kickChatEnhancerModAssist";
+  const MA_DEFAULT_SETTINGS = {
+    enabled: true,
+    checkModOnly: false,   // výchozí: funguje všude; uživatel může zapnout "jen na svých kanálech"
+    disabledUntil: null,
+    triggerConsecutive: 3,
+    triggerWindow: 4,
+    windowSeconds: 60,
+    similarityThreshold: 0.65,
+    autoCloseSecs: 15,
+  };
+
+  let maSettings = { ...MA_DEFAULT_SETTINGS };
+  let maIsMod = true;   // optimisticky – nastavíme false jen při pozitivním potvrzení "nejsi mod"
+  const maModCache = new Map();
+  const maUserHistory = new Map();
+  const maAlertCooldown = new Map();
+  const maUserLastTimeout = new Map();
+  const maProcessedEntries = new WeakSet();
+
+  async function maSaveSettings(updates) {
+    maSettings = { ...maSettings, ...updates };
+    try { await chrome.storage.sync.set({ [MA_KEY]: maSettings }); } catch (_) {}
+  }
+
+  let _maEnabledLogged = null;
+  function maIsEnabled() {
+    if (!maSettings.enabled) {
+      if (_maEnabledLogged !== "disabled") { console.log("[KCE-MA] ✗ settings.enabled = false"); _maEnabledLogged = "disabled"; }
+      return false;
+    }
+    if (maSettings.checkModOnly && !maIsMod) {
+      if (_maEnabledLogged !== "nomod") { console.log("[KCE-MA] ✗ checkModOnly=true ale maIsMod=false → MA vypnuta"); _maEnabledLogged = "nomod"; }
+      return false;
+    }
+    const du = maSettings.disabledUntil;
+    if (du === null || du === undefined) { _maEnabledLogged = "ok"; return true; }
+    if (du === -1) {
+      if (_maEnabledLogged !== "perm") { console.log("[KCE-MA] ✗ trvale vypnuta (disabledUntil=-1)"); _maEnabledLogged = "perm"; }
+      return false;
+    }
+    if (Date.now() < du) {
+      if (_maEnabledLogged !== "time") { console.log("[KCE-MA] ✗ dočasně vypnuta do", new Date(du).toLocaleTimeString()); _maEnabledLogged = "time"; }
+      return false;
+    }
+    maSaveSettings({ disabledUntil: null });
+    _maEnabledLogged = "ok";
+    return true;
+  }
+
+  async function maCheckModStatus() {
+    if (!maSettings.checkModOnly) { maIsMod = true; return; }
+
+    const channelMatch = window.location.pathname.match(/^\/([^/]+)/);
+    const channel = channelMatch ? channelMatch[1].toLowerCase() : null;
+    if (!channel || channel === "" || channel === "browse" || channel === "following") {
+      maIsMod = false;
+      return;
+    }
+    if (maModCache.has(channel)) { maIsMod = maModCache.get(channel); return; }
+
+    // Výchozí: předpokládáme mod; nastavíme false jen při pozitivním potvrzení opaku
+    let isMod = true;
+    try {
+      const r = await pageContextFetch(
+        "https://kick.com/api/v2/channels/" + encodeURIComponent(channel),
+        { credentials: "include", headers: buildApiHeaders(false) }
+      );
+      if (r.ok) {
+        const data = JSON.parse(r.text);
+        // Kick API vrací is_moderator nebo role – pokud to existuje, použij to
+        if (data?.is_moderator === false) isMod = false;
+        else if (data?.is_moderator === true) isMod = true;
+        else if (data?.chatroom?.is_moderator === false) isMod = false;
+        else if (data?.chatroom?.is_moderator === true) isMod = true;
+        // Pokud pole neexistuje vůbec, necháme isMod = true (nelze určit → neblokuj)
+      }
+    } catch (_) {}
+
+    maIsMod = isMod;
+    maModCache.set(channel, isMod);
+    console.log("[KCE-MA] mod check →", channel, "isMod:", isMod, "| checkModOnly:", maSettings.checkModOnly, "| maIsEnabled nyní:", maIsEnabled());
+  }
+
+  function maNormalize(text) {
+    return text
+      .toLowerCase()
+      .replace(/[\u{1F000}-\u{1FAFF}]/gu, " ")
+      .replace(/:[a-zA-Z0-9_+\-]+:/g, " ")
+      .replace(/[^a-z0-9\u00C0-\u024F\s]/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function maSimilarity(a, b) {
+    if (!a || !b) return 0;
+    if (a === b) return 1.0;
+    const tokA = a.split(/\s+/).filter((t) => t.length > 1);
+    const tokB = b.split(/\s+/).filter((t) => t.length > 1);
+    if (!tokA.length || !tokB.length) {
+      return Math.min(a.length, b.length) / Math.max(a.length, b.length) || 0;
+    }
+    const setA = new Set(tokA);
+    const setB = new Set(tokB);
+    let common = 0;
+    for (const t of setA) if (setB.has(t)) common++;
+    return common / Math.max(setA.size, setB.size);
+  }
+
+  function maExtractFromEntry(entryEl) {
+    if (!entryEl) return { username: null, messageText: "" };
+    let username = null;
+
+    // 1. Username element s třídou – hledáme DEEP (7TV shadow DOM)
+    const usernameEl = querySelectorDeep(entryEl,
+      'a[class*="username"], a[class*="chat-entry-username"], a[data-chat-entry-user],' +
+      'span[class*="username"], button[class*="username"]'
+    );
+    if (usernameEl) {
+      const href = usernameEl.getAttribute?.("href");
+      if (href) { const m = href.match(/\/([^/]+)\/?$/); if (m) username = m[1]; }
+      if (!username) username = (usernameEl.textContent || "").trim().replace(/:$/, "") || null;
+    }
+
+    // 2. Libovolný profilový odkaz – deep search (prochází shadow DOM)
+    if (!username) {
+      const links = querySelectorAllDeep(entryEl, "a[href]");
+      for (const link of links) {
+        const href = link.getAttribute("href") || "";
+        if (href.startsWith("http") && !href.includes("kick.com")) continue;
+        const m = href.match(/\/([A-Za-z][\w]{1,24})\/?$/);
+        if (m) { username = m[1]; break; }
+      }
+    }
+
+    // Sbírej čistý text rekurzivně (včetně shadow DOM), přeskočí injektované elementy
+    let fullText = "";
+    const SKIP_CLASSES = ["kce-mod-handle", "kce-swipe-bg", "kce-ma-popup", "kce-ma-welcome"];
+    const collectText = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) { fullText += node.textContent; return; }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (SKIP_CLASSES.some((c) => node.classList?.contains(c))) return;
+      for (const child of node.childNodes) collectText(child);
+      if (node.shadowRoot) {
+        for (const child of node.shadowRoot.childNodes) collectText(child);
+      }
+    };
+    collectText(entryEl);
+    fullText = fullText.trim();
+    if (!fullText) fullText = (entryEl.textContent || "").trim();
+
+    // Odstraň timestamp prefix: "07:37", "07:37 PM", "7:37AM" apod.
+    fullText = fullText.replace(/^\d{1,2}:\d{2}\s*(?:AM|PM)?\s*/i, "").trim();
+
+    // 3. Colon-based fallback – zkusíme každou ":" a hledáme validní username před ní
+    if (!username && fullText.includes(":")) {
+      let searchFrom = 0;
+      while (searchFrom < fullText.length) {
+        const colonIdx = fullText.indexOf(":", searchFrom);
+        if (colonIdx === -1) break;
+        const rawBefore = fullText.slice(0, colonIdx).trim();
+        // Vezmi poslední "slovo" (po posledním whitespace/non-word)
+        const candidate = rawBefore.replace(/^[\s\S]*[\s\W]/, "").replace(/^[^\w]+/, "").replace(/[^\w]+$/, "");
+        if (/^[A-Za-z][\w]{1,24}$/.test(candidate)) { username = candidate; break; }
+        searchFrom = colonIdx + 1;
+      }
+    }
+
+    let messageText = fullText;
+    if (username) {
+      const idx = fullText.indexOf(username);
+      if (idx >= 0) messageText = fullText.slice(idx + username.length).replace(/^[:\s]+/, "").trim();
+    }
+    return { username, messageText };
+  }
+
+  // ── Primární detekce: MutationObserver → maHandleNewNode ──
+  // Voláno přímo z observeChat když jsou přidány nové DOM nody.
+  // Čeká 500ms na React/Vue render, pak extrahuje a kontroluje zprávy.
+  let maPendingNodes = [];
+  let maPendingFlushId = null;
+
+  function maHandleNewNode(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+    const cl = node.classList;
+    if (cl?.contains?.("kce-mod-handle") || cl?.contains?.("kce-swipe-bg") ||
+        cl?.contains?.("kce-ma-popup") || cl?.contains?.("kce-ma-welcome")) return;
+    console.log("[KCE-MA] node přijat:", node.tagName, String(node.className || "").slice(0, 50));
+    maPendingNodes.push(node);
+    if (maPendingFlushId) return;
+    maPendingFlushId = setTimeout(() => {
+      maPendingFlushId = null;
+      console.log("[KCE-MA] flush:", maPendingNodes.length, "nodů, enabled:", maIsEnabled());
+      if (!maIsEnabled()) { maPendingNodes = []; return; }
+      const nodes = maPendingNodes.splice(0);
+      for (const n of nodes) {
+        if (!n.isConnected) continue;
+        // Použij querySelectorAllDeep – prochází i shadow DOM (7TV SEVENTV-CONTAINER)
+        const deep = querySelectorAllDeep(n, "[data-chat-entry], .kce-message");
+        const candidates = deep.length > 0 ? deep : [n];
+        for (const entry of candidates) {
+          if (!entry || entry.nodeType !== Node.ELEMENT_NODE) continue;
+          if (entry.classList?.contains?.("kce-mod-handle") || entry.classList?.contains?.("kce-ma-popup")) continue;
+          if (maProcessedEntries.has(entry)) continue;
+          const text = (entry.textContent || "").trim();
+          if (text.length < 4 || !text.includes(":")) continue;
+          maProcessedEntries.add(entry);
+          const { username, messageText } = maExtractFromEntry(entry);
+          console.log("[KCE-MA] extract →", { username, msg: messageText?.slice(0, 40), tag: entry.tagName });
+          if (username && messageText) {
+            console.log("[KCE-MA] Mutation:", username, "→", messageText.slice(0, 50));
+            maCheckMessage(username, messageText);
+          }
+        }
+      }
+    }, 500);
+  }
+
+  // ── Záložní scan: každých 800ms, pouze pokud mutation nestačí ──
+  function maPeriodicScan() {
+    if (!maIsEnabled()) return;
+    const root = findChatroomEl() || document.body;
+    // querySelectorAllDeep prochází i shadow DOM (7TV, jiné emote extensions)
+    const entries = querySelectorAllDeep(root, "[data-chat-entry], .kce-message");
+    for (const entry of entries) {
+      if (maProcessedEntries.has(entry)) continue;
+      if (entry.classList.contains("kce-ma-popup") || entry.classList.contains("kce-ma-welcome")) continue;
+      const text = (entry.textContent || "").trim();
+      if (text.length < 4 || !text.includes(":")) continue;
+      maProcessedEntries.add(entry);
+      const { username, messageText } = maExtractFromEntry(entry);
+      if (username && messageText) {
+        console.log("[KCE-MA] Scan:", username, "→", messageText.slice(0, 50));
+        maCheckMessage(username, messageText);
+      }
+    }
+  }
+
+  function maCheckMessage(username, messageText) {
+    if (!username || !messageText || messageText.length < 3) return;
+    const cooldown = maAlertCooldown.get(username);
+    if (cooldown && Date.now() - cooldown < 30000) return;
+    const normalized = maNormalize(messageText);
+    if (!normalized || normalized.length < 2) return;
+    let history = maUserHistory.get(username) || [];
+    history.push({ text: messageText, normalized, ts: Date.now() });
+    if (history.length > 20) history = history.slice(-20);
+    maUserHistory.set(username, history);
+    if (history.length < (maSettings.triggerConsecutive ?? 3)) return;
+    const thresh = maSettings.similarityThreshold ?? 0.65;
+    const consec = history.slice(-(maSettings.triggerConsecutive ?? 3));
+    const refNorm = consec[0].normalized;
+    const allConsecSimilar = consec.every((m) => maSimilarity(refNorm, m.normalized) >= thresh);
+    const windowMs = (maSettings.windowSeconds ?? 60) * 1000;
+    const now = Date.now();
+    const inWindow = history.filter((m) => now - m.ts <= windowMs);
+    let windowMatchCount = 0;
+    if (inWindow.length >= 2) {
+      const lastNorm = inWindow[inWindow.length - 1].normalized;
+      for (const m of inWindow) {
+        if (maSimilarity(lastNorm, m.normalized) >= thresh) windowMatchCount++;
+      }
+    }
+    if (allConsecSimilar) {
+      maAlertCooldown.set(username, now);
+      showMaPopup(username, consec.map((m) => m.text), `${consec.length}\xD7 stejn\xE1 zpr\xE1va za sebou`);
+    } else if (windowMatchCount >= (maSettings.triggerWindow ?? 4)) {
+      maAlertCooldown.set(username, now);
+      const lastNorm = inWindow[inWindow.length - 1].normalized;
+      const matchMsgs = inWindow
+        .filter((m) => maSimilarity(lastNorm, m.normalized) >= thresh)
+        .map((m) => m.text)
+        .slice(-3);
+      showMaPopup(username, matchMsgs, `${windowMatchCount}\xD7 podobn\xE1 zpr\xE1va za ${maSettings.windowSeconds}s`);
+    }
+  }
+
+  // ── Welcome pill (Dynamic Island) ────────────────────
+  let maWelcomeTimerId = null;
+  function showMaWelcome() {
+    const existing = document.querySelector(".kce-ma-welcome");
+    if (existing) existing.remove();
+    if (maWelcomeTimerId) { clearTimeout(maWelcomeTimerId); maWelcomeTimerId = null; }
+    const pill = document.createElement("div");
+    pill.className = "kce-ma-welcome";
+    pill.innerHTML =
+      `<span class="kce-ma-w-dot"></span>` +
+      `<span class="kce-ma-w-text">Moderation Assist aktivn\xED</span>`;
+    document.body.appendChild(pill);
+    maWelcomeTimerId = setTimeout(() => {
+      pill.classList.add("kce-ma-welcome-out");
+      setTimeout(() => { if (pill.isConnected) pill.remove(); }, 500);
+    }, 4000);
+  }
+
+  // ── Alert popup (Dynamic Island) ─────────────────────
+  const MA_TIMEOUT_STEPS = [30, 60, 120, 300, 600, 1800, 3600, 7200, 14400, 86400, 604800];
+
+  function maGetNextTimeoutIdx(username) {
+    const last = maUserLastTimeout.get(username) || 0;
+    const idx = MA_TIMEOUT_STEPS.findIndex((s) => s > last);
+    return idx >= 0 ? idx : MA_TIMEOUT_STEPS.length - 1;
+  }
+
+  let maPopupTimerId = null;
+
+  function showMaPopup(username, messages, triggerReason) {
+    const existing = document.querySelector(".kce-ma-popup");
+    if (existing) {
+      existing.remove();
+      if (maPopupTimerId) { clearTimeout(maPopupTimerId); maPopupTimerId = null; }
+    }
+    const autoClose = maSettings.autoCloseSecs ?? 15;
+    let timeoutIdx = maGetNextTimeoutIdx(username);
+    const safeUser = (username || "?").replace(/[<>&"]/g, "");
+    const previewHtml = messages.slice(-3).map((m) => {
+      const safe = (m || "").replace(/[<>&"]/g, "").slice(0, 80);
+      return `<div class="kce-ma-msg-preview">${safe}</div>`;
+    }).join("");
+
+    const popup = document.createElement("div");
+    popup.className = "kce-ma-popup";
+    popup.innerHTML =
+      `<div class="kce-ma-top-bar">` +
+        `<span class="kce-ma-pill-icon">\u26A0</span>` +
+        `<span class="kce-ma-pill-label">Moderation Assist</span>` +
+        `<button class="kce-ma-close">\xD7</button>` +
+      `</div>` +
+      `<div class="kce-ma-content">` +
+        `<div class="kce-ma-user-row">` +
+          `<span class="kce-ma-avatar">${safeUser.slice(0, 1).toUpperCase()}</span>` +
+          `<div>` +
+            `<div class="kce-ma-username">${safeUser}</div>` +
+            `<div class="kce-ma-reason">${triggerReason}</div>` +
+          `</div>` +
+        `</div>` +
+        `<div class="kce-ma-previews">${previewHtml}</div>` +
+        `<div class="kce-ma-actions">` +
+          `<button class="kce-ma-btn kce-ma-ignore">Nechat b\xFDt</button>` +
+          `<div class="kce-ma-timeout-group">` +
+            `<button class="kce-ma-tostep kce-ma-to-dec">\u2039</button>` +
+            `<button class="kce-ma-btn kce-ma-to-act">Timeout ${formatDuration(MA_TIMEOUT_STEPS[timeoutIdx])}</button>` +
+            `<button class="kce-ma-tostep kce-ma-to-inc">\u203A</button>` +
+          `</div>` +
+          `<button class="kce-ma-btn kce-ma-ban">Ban</button>` +
+        `</div>` +
+        `<div class="kce-ma-footer">` +
+          `<span class="kce-ma-dis-label">Vypnout assist:</span>` +
+          `<button class="kce-ma-dis-btn" data-ms="300000">5 min</button>` +
+          `<button class="kce-ma-dis-btn" data-ms="3600000">1 h</button>` +
+          `<button class="kce-ma-dis-btn" data-ms="86400000">1 den</button>` +
+          `<button class="kce-ma-dis-btn" data-ms="604800000">7 dn\xED</button>` +
+          `<button class="kce-ma-dis-btn" data-ms="-1">Nav\u017Edy</button>` +
+        `</div>` +
+      `</div>` +
+      `<div class="kce-ma-progress-wrap">` +
+        `<div class="kce-ma-progress-bar"></div>` +
+      `</div>`;
+
+    document.body.appendChild(popup);
+
+    // JS-driven progress bar (CSS animation-duration je přebita !important – používáme RAF)
+    const progressBar = popup.querySelector(".kce-ma-progress-bar");
+    const startTime = Date.now();
+    const durationMs = autoClose * 1000;
+    let progressRafId = null;
+    const tickProgress = () => {
+      if (!popup.isConnected) return;
+      const pct = Math.max(0, 1 - (Date.now() - startTime) / durationMs);
+      progressBar.style.transform = `scaleX(${pct})`;
+      if (pct > 0) progressRafId = requestAnimationFrame(tickProgress);
+    };
+    progressRafId = requestAnimationFrame(tickProgress);
+
+    const toActBtn = popup.querySelector(".kce-ma-to-act");
+    const closeFn = () => {
+      if (progressRafId) { cancelAnimationFrame(progressRafId); progressRafId = null; }
+      popup.classList.add("kce-ma-popup-out");
+      setTimeout(() => { if (popup.isConnected) popup.remove(); }, 400);
+      if (maPopupTimerId) { clearTimeout(maPopupTimerId); maPopupTimerId = null; }
+    };
+    const updateToBtn = () => { toActBtn.textContent = "Timeout " + formatDuration(MA_TIMEOUT_STEPS[timeoutIdx]); };
+
+    maPopupTimerId = setTimeout(closeFn, autoClose * 1000);
+    popup.querySelector(".kce-ma-close").addEventListener("click", closeFn);
+    popup.querySelector(".kce-ma-ignore").addEventListener("click", closeFn);
+    popup.querySelector(".kce-ma-to-dec").addEventListener("click", () => { timeoutIdx = Math.max(0, timeoutIdx - 1); updateToBtn(); });
+    popup.querySelector(".kce-ma-to-inc").addEventListener("click", () => { timeoutIdx = Math.min(MA_TIMEOUT_STEPS.length - 1, timeoutIdx + 1); updateToBtn(); });
+    toActBtn.addEventListener("click", () => {
+      const secs = MA_TIMEOUT_STEPS[timeoutIdx];
+      maUserLastTimeout.set(username, secs);
+      closeFn();
+      const ch = (window.location.pathname.match(/^\/([^/]+)/) || [])[1] || null;
+      executeModAction(
+        { action: "timeout", label: "Timeout " + formatDuration(secs), durationSeconds: secs, color: "#f59e0b" },
+        { channel: ch, username, messageId: null, messageText: messages[messages.length - 1] || "" }
+      );
+    });
+    popup.querySelector(".kce-ma-ban").addEventListener("click", () => {
+      closeFn();
+      const ch = (window.location.pathname.match(/^\/([^/]+)/) || [])[1] || null;
+      executeModAction(
+        { action: "ban", label: "PERMANENT BAN", color: "#7f1d1d" },
+        { channel: ch, username, messageId: null, messageText: messages[messages.length - 1] || "" }
+      );
+    });
+    popup.querySelectorAll(".kce-ma-dis-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const ms = parseInt(btn.dataset.ms, 10);
+        maSaveSettings({ disabledUntil: ms === -1 ? -1 : Date.now() + ms });
+        closeFn();
+        showModToast("Moderation Assist vypnut" + (ms === -1 ? " nav\u017Edy" : " na " + btn.textContent), true);
+      });
+    });
+  }
+
+  // ── Test commands ─────────────────────────────────────
+  function maInterceptChatInput(e) {
+    if (e.key !== "Enter") return;
+    const el = e.target;
+    if (!el) return;
+    const isInput = el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+    if (!isInput) return;
+    const raw = (el.value !== undefined ? el.value : el.textContent || "").trim();
+    if (!raw.startsWith("!assistTest")) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (el.value !== undefined) { el.value = ""; } else { el.textContent = ""; }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+
+    const parts = raw.split(/\s+/);
+    const testUser = parts[1] || null;
+
+    if (!testUser) {
+      showMaWelcome();
+    } else {
+      const fakeHistory = [
+        testUser + ": kdy bude stream",
+        testUser + ": kdy bude stream pls",
+        testUser + ": kdy bude stream!!!",
+      ];
+      showMaPopup(testUser, fakeHistory, "3\xD7 stejn\xE1 zpr\xE1va (test)");
+    }
+  }
+
+  async function maInit() {
+    try {
+      const r = await chrome.storage.sync.get(MA_KEY);
+      const stored = r[MA_KEY] || {};
+      // Migrace starých nastavení: checkModOnly dříve defaultovalo na true,
+      // nyní default je false. Pokud uživatel nastavení explicitně nezměnil
+      // (žádný _v tag), resetujeme checkModOnly na false.
+      if (!stored._v && stored.checkModOnly === true) {
+        stored.checkModOnly = false;
+        stored._v = 1;
+      }
+      maSettings = { ...MA_DEFAULT_SETTINGS, ...stored };
+    } catch (_) {}
+
+    console.log("[KCE-MA] init – načtená nastavení:", JSON.stringify({ enabled: maSettings.enabled, checkModOnly: maSettings.checkModOnly, disabledUntil: maSettings.disabledUntil }), "| isMod:", maIsMod);
+
+    // Kontrola mod statusu – BEZ await, aby neblokovala na 15s timeout
+    maCheckModStatus();
+
+    // Test command interceptor
+    document.addEventListener("keydown", maInterceptChatInput, true);
+
+    // Po 3s: označ stávající zprávy jako zpracované a spusť scan
+    setTimeout(() => {
+      // Fallback na document.body pokud findChatroomEl() selže (offline chat apod.)
+      const scanRoot = findChatroomEl() || document.body;
+      // Pre-markujeme jen elementy s reálným obsahem (ne prázdné [data-index] placeholdery
+      // ve virtuálním listu – ty by jinak byly považovány za zpracované i po načtení obsahu)
+      querySelectorAllDeep(scanRoot, "[data-chat-entry], .kce-message").forEach((el) => {
+        const text = (el.textContent || "").trim();
+        if (text.length > 3 && text.includes(":")) maProcessedEntries.add(el);
+      });
+      // Spusť záložní periodický scan
+      setInterval(maPeriodicScan, 800);
+      // Welcome notifikace
+      if (maIsEnabled()) showMaWelcome();
+    }, 3000);
+  }
+
+  // =====================================================
+
   function observeChat() {
     let tagPending = false;
     const scheduleTag = () => {
@@ -760,7 +1250,8 @@
     const isOwnMutation = (node) =>
       node?.classList?.contains?.("kce-mod-handle") ||
       node?.classList?.contains?.("kce-pause-banner") ||
-      node?.classList?.contains?.("kce-swipe-bg");
+      node?.classList?.contains?.("kce-swipe-bg") ||
+      node?.classList?.contains?.("kce-ma-popup");
 
     const isEmoteExtensionNode = (node) => {
       if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
@@ -791,6 +1282,7 @@
             if (node?.nodeType !== Node.ELEMENT_NODE) continue;
             if (isOwnMutation(node) || isEmoteExtensionNode(node)) continue;
             dominated = false;
+            maHandleNewNode(node);
             if (node.dataset?.chatEntry) {
               addEnhancementClass(node, "message");
               tagLinkHighlights(node);
@@ -1412,6 +1904,7 @@
     const settings = await getSettings();
     applyEnhancements(settings);
     tagChatMessages();
+    await maInit();
     observeChat();
     setupPauseOnHover(settings);
     setupModDragHandle(settings);
