@@ -1,4 +1,5 @@
 # Kick Chat Enhancer
+![Nepojmenovaná (24)](https://github.com/user-attachments/assets/fb09aa40-6b5d-4847-8248-148e3580bba0)
 
 Rozšíření pro prohlížeč (Chrome, Edge), které vylepšuje vzhled a čitelnost chatu na **[Kick.com](https://kick.com)**. Inspirováno chatem na Twitchi – větší mezery, vizuální oddělení zpráv, zvýraznění odkazů a další nastavitelné úpravy.
 
