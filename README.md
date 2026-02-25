@@ -1,5 +1,6 @@
 # Better Kick Modding
-![Nepojmenovaná (24)](https://github.com/user-attachments/assets/fb09aa40-6b5d-4847-8248-148e3580bba0)
+![ChatGPT Image 25  2  2026 23_53_48](https://github.com/user-attachments/assets/3e6cbf78-d135-4f95-aa18-3ca47abd77d2)
+
 
 Rozšíření pro prohlížeč (Chrome, Edge), které vylepšuje vzhled a čitelnost chatu na **[Kick.com](https://kick.com)**. Inspirováno chatem na Twitchi – větší mezery, vizuální oddělení zpráv, zvýraznění odkazů a další nastavitelné úpravy.
 
