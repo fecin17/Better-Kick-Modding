@@ -28,6 +28,8 @@
     mentionHighlight: true,
     mentionNotifications: false,
     mentionAliases: "",
+    slowModeCooldown: true,
+    quickReplies: [],
   };
 
   let cachedCss = null;
@@ -107,6 +109,9 @@
     kceMentionAliases = (settings.mentionAliases || "")
       .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
     rebuildMentionRegex();
+    // Slow mode cooldown a quick replies
+    kceCooldownEnabled = !!settings.slowModeCooldown;
+    kceQuickReplies = Array.isArray(settings.quickReplies) ? settings.quickReplies : [];
     if (!settings.modDragHandle) {
       querySelectorAllDeep(document.body, ".kce-mod-handle").forEach((h) => h.remove());
     }
@@ -952,6 +957,119 @@
     }
   }
 
+  // ── SLOW MODE COOLDOWN INDIKÁTOR ────────────────────────
+  // Po odeslání zprávy zobrazí pill nad chat inputem s odpočtem do další zprávy.
+  // Spouštěno z kce-new-chat-message listeneru, když je sender == kceCurrentUsername.
+  let kceCooldownEndAt = 0;
+  let kceCooldownRafId = null;
+  let kceCooldownEnabled = true;
+
+  function startSlowModeCooldown() {
+    if (!kceCooldownEnabled) return;
+    if (!kceSlowModeInfo.enabled || !kceSlowModeInfo.interval) return;
+    kceCooldownEndAt = Date.now() + kceSlowModeInfo.interval * 1000;
+    if (!kceCooldownRafId) tickSlowModeCooldown();
+  }
+
+  function findChatInput() {
+    // Najdi textarea/input v rámci chatroomu pro určení pozice pill
+    const chatroom = findChatroomEl();
+    if (!chatroom) return null;
+    return chatroom.querySelector("textarea, input[type='text'], [contenteditable='true']");
+  }
+
+  function ensureCooldownPill() {
+    let pill = document.querySelector(".kce-cooldown-pill");
+    if (pill) return pill;
+    pill = document.createElement("div");
+    pill.className = "kce-cooldown-pill";
+    pill.setAttribute("data-kce-internal", "1");
+    document.body.appendChild(pill);
+    return pill;
+  }
+
+  // ── QUICK REPLIES ───────────────────────────────────────
+  // Až 6 přednastavených zpráv. Klávesa Alt+1..6 vyplní chat input (neodesílá –
+  // user musí potvrdit Enterem, aby měl možnost ještě doplnit nebo zrušit).
+  let kceQuickReplies = [];
+
+  function getQuickReply(idx) {
+    if (idx < 0 || idx >= kceQuickReplies.length) return null;
+    const qr = kceQuickReplies[idx];
+    if (!qr || typeof qr.text !== "string" || !qr.text.trim()) return null;
+    return qr.text;
+  }
+
+  function insertIntoChatInput(text) {
+    const input = findChatInput();
+    if (!input) return false;
+    input.focus();
+    // textarea / input.value
+    if ("value" in input) {
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      input.value = input.value.slice(0, start) + text + input.value.slice(end);
+      const newPos = start + text.length;
+      try { input.setSelectionRange(newPos, newPos); } catch (_) {}
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    }
+    // contentEditable
+    if (input.isContentEditable) {
+      // Použij execCommand jako nejjednodušší path (Kick používá Tiptap/Lexical – respektují to)
+      try {
+        document.execCommand("insertText", false, text);
+        return true;
+      } catch (_) {
+        input.textContent = (input.textContent || "") + text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function handleQuickReplyShortcut(e) {
+    if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+    // Alt+1..6 → quick reply slot 0..5
+    const digit = parseInt(e.key, 10);
+    if (!digit || digit < 1 || digit > 6) return;
+    const text = getQuickReply(digit - 1);
+    if (!text) return;
+    e.preventDefault();
+    e.stopPropagation();
+    insertIntoChatInput(text);
+  }
+
+  function tickSlowModeCooldown() {
+    const remaining = (kceCooldownEndAt - Date.now()) / 1000;
+    if (remaining <= 0) {
+      // Konec – odstraň pill
+      const pill = document.querySelector(".kce-cooldown-pill");
+      if (pill) pill.remove();
+      kceCooldownRafId = null;
+      return;
+    }
+    const pill = ensureCooldownPill();
+    pill.textContent = `Můžeš psát za ${Math.ceil(remaining)} s`;
+    // Pozice nad chat inputem
+    const input = findChatInput();
+    if (input) {
+      const rect = input.getBoundingClientRect();
+      pill.style.top = (rect.top - 32) + "px";
+      pill.style.left = (rect.left + 8) + "px";
+      pill.style.display = "block";
+    } else {
+      // Fallback: pravý dolní roh
+      pill.style.bottom = "80px";
+      pill.style.right = "20px";
+      pill.style.top = "auto";
+      pill.style.left = "auto";
+      pill.style.display = "block";
+    }
+    kceCooldownRafId = requestAnimationFrame(tickSlowModeCooldown);
+  }
+
   function extractSlowModeInfo(data) {
     // Slow mode info bývá pod různými klíči podle verze API – prohledáme nejčastější.
     const candidates = [
@@ -1492,8 +1610,9 @@
     // Dokud check nedoběhne, mod akce jsou blokované (kceModCheckPending = true).
     checkModeratorStatus();
 
-    // Test command interceptor
+    // Test command interceptor + quick replies (Alt+1..6)
     document.addEventListener("keydown", maInterceptChatInput, true);
+    document.addEventListener("keydown", handleQuickReplyShortcut, true);
 
     // PRIMÁRNÍ detekce zpráv – page-bridge (MAIN world) zachytává zprávy přímo
     // z Pusher WebSocketu a vystřelí event. Žádný DOM parsing, žádný delay.
@@ -1502,6 +1621,10 @@
       if (!username || !content) return;
       if (maIsEnabled()) maCheckMessage(username, content);
       handleMentionInMessage(username, content);
+      // Detekce VLASTNÍ zprávy – pro slow mode cooldown countdown
+      if (kceCurrentUsername && username.toLowerCase() === kceCurrentUsername) {
+        startSlowModeCooldown();
+      }
     });
 
     // Po 3s: označ stávající zprávy jako zpracované a spusť scan

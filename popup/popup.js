@@ -14,7 +14,40 @@ const defaults = {
   mentionHighlight: true,
   mentionNotifications: false,
   mentionAliases: "",
+  slowModeCooldown: true,
+  quickReplies: [],
 };
+
+const QR_COUNT = 6;
+
+function buildQuickRepliesGrid(values) {
+  const grid = document.getElementById("quickRepliesGrid");
+  grid.innerHTML = "";
+  for (let i = 0; i < QR_COUNT; i++) {
+    const row = document.createElement("div");
+    row.className = "qr-row";
+    const key = document.createElement("div");
+    key.className = "qr-key";
+    key.textContent = "Alt+" + (i + 1);
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "qr-input";
+    input.id = "qr-" + i;
+    input.maxLength = 200;
+    input.placeholder = i === 0 ? "Read the rules!" : "";
+    input.value = (values[i] && values[i].text) || "";
+    input.addEventListener("input", scheduleQrSave);
+    row.appendChild(key);
+    row.appendChild(input);
+    grid.appendChild(row);
+  }
+}
+
+let qrSaveTimer = null;
+function scheduleQrSave() {
+  if (qrSaveTimer) clearTimeout(qrSaveTimer);
+  qrSaveTimer = setTimeout(saveSettings, 400);
+}
 
 const maDefaults = {
   enabled: true,
@@ -75,6 +108,8 @@ async function loadSettings() {
   document.getElementById("mentionHighlight").checked = settings.mentionHighlight;
   document.getElementById("mentionNotifications").checked = settings.mentionNotifications;
   document.getElementById("mentionAliases").value = settings.mentionAliases || "";
+  document.getElementById("slowModeCooldown").checked = settings.slowModeCooldown !== false;
+  buildQuickRepliesGrid(settings.quickReplies || []);
 
   document.getElementById("chatFontSize").value = settings.chatFontSize;
   document.getElementById("chatFontSizeValue").textContent = settings.chatFontSize + "px";
@@ -107,8 +142,21 @@ async function saveSettings() {
     mentionHighlight: document.getElementById("mentionHighlight").checked,
     mentionNotifications: document.getElementById("mentionNotifications").checked,
     mentionAliases: document.getElementById("mentionAliases").value.trim(),
+    slowModeCooldown: document.getElementById("slowModeCooldown").checked,
+    quickReplies: collectQuickReplies(),
   };
   await chrome.storage.sync.set({ [STORAGE_KEY]: settings });
+}
+
+function collectQuickReplies() {
+  const out = [];
+  for (let i = 0; i < QR_COUNT; i++) {
+    const input = document.getElementById("qr-" + i);
+    if (!input) continue;
+    const text = input.value.trim();
+    out.push({ text });
+  }
+  return out;
 }
 
 async function saveMaSettings(updates) {

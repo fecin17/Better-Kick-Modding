@@ -143,6 +143,27 @@ div[data-index] div:not(.kce-mod-handle):not([class*="seventv"]):not([class*="7t
   text-shadow: 0 0 8px rgba(125, 211, 252, 0.4) !important;
 }
 
+/* ===== SLOW MODE COOLDOWN PILL ===== */
+.kce-cooldown-pill {
+  position: fixed !important;
+  display: none;
+  z-index: var(--kce-z-ma-welcome) !important;
+  padding: 4px 10px !important;
+  background: rgba(20, 22, 30, 0.92) !important;
+  border: 1px solid rgba(251, 191, 36, 0.4) !important;
+  border-radius: 999px !important;
+  color: rgba(253, 224, 71, 0.95) !important;
+  font-family: system-ui, -apple-system, sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  pointer-events: none !important;
+  white-space: nowrap !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  transition: opacity 0.2s ease !important;
+}
+
 /* ===== @MENTION HIGHLIGHT ===== */
 /* Zpráva, kde tě někdo zmínil – zlato-žlutý border vlevo + jemné pozadí.
    Třída se přidává z content.js po vyhodnocení WebSocket eventu. */
