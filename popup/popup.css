@@ -88,6 +88,33 @@ h1 {
   padding: 4px 0 8px 52px;
 }
 
+.text-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 8px;
+}
+
+.text-setting.sub-setting {
+  padding-left: 52px;
+}
+
+.text-setting input[type="text"] {
+  background: #1f1f23;
+  border: 1px solid #3d3d40;
+  color: #efeff1;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.text-setting input[type="text"]:focus {
+  border-color: #9147ff;
+}
+
 .range-header {
   display: flex;
   justify-content: space-between;
@@ -159,6 +186,17 @@ code {
   margin: 18px 0 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid #2d2d2d;
+}
+
+.ma-info-note {
+  margin: 4px 0 6px;
+  font-size: 11px;
+  color: #adadb8;
+  line-height: 1.4;
+  padding: 8px 10px;
+  background: rgba(145, 71, 255, 0.08);
+  border-left: 2px solid rgba(145, 71, 255, 0.5);
+  border-radius: 4px;
 }
 
 .ma-status-row {

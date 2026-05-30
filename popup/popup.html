@@ -29,9 +29,9 @@
       <div class="range-setting sub-setting" id="spacingSliderWrap">
         <div class="range-header">
           <span class="label">Velikost mezer</span>
-          <span class="range-value" id="messageSpacingPxValue">5px</span>
+          <span class="range-value" id="messageSpacingPxValue">2px</span>
         </div>
-        <input type="range" id="messageSpacingPx" min="0" max="12" step="1" value="5">
+        <input type="range" id="messageSpacingPx" min="0" max="8" step="1" value="2">
       </div>
 
       <label class="toggle">
@@ -69,6 +69,23 @@
         <span class="slider"></span>
         <span class="label">Moderátorský úchop (táhnutí doprava)</span>
       </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="mentionHighlight" checked>
+        <span class="slider"></span>
+        <span class="label">Zvýraznit zprávy, kde tě někdo zmínil</span>
+      </label>
+
+      <label class="toggle">
+        <input type="checkbox" id="mentionNotifications">
+        <span class="slider"></span>
+        <span class="label">Desktop notifikace při zmínce</span>
+      </label>
+
+      <div class="text-setting sub-setting" id="mentionAliasesWrap">
+        <span class="label">Další jména/aliasy (oddělené čárkou)</span>
+        <input type="text" id="mentionAliases" placeholder="napr. mujnick2, alias" autocomplete="off">
+      </div>
     </div>
 
     <div class="section-title">Moderation Assist</div>
@@ -79,11 +96,7 @@
         <span class="label">Aktivovat Moderation Assist</span>
       </label>
 
-      <label class="toggle">
-        <input type="checkbox" id="maCheckModOnly" checked>
-        <span class="slider"></span>
-        <span class="label">Jen na kanálech kde jsi moderátor</span>
-      </label>
+      <p class="ma-info-note">Moderátorské akce (timeout, ban, mazání) jsou dostupné jen pokud máš na kanále roli moderátora.</p>
 
       <div class="ma-status-row" id="maStatusRow">
         <span class="ma-status-label">Stav:</span>

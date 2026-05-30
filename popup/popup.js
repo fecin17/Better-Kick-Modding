@@ -10,7 +10,10 @@ const defaults = {
   pauseChatOnHover: true,
   modDragHandle: true,
   chatFontSize: 13,
-  messageSpacingPx: 5,
+  messageSpacingPx: 2,
+  mentionHighlight: true,
+  mentionNotifications: false,
+  mentionAliases: "",
 };
 
 const maDefaults = {
@@ -69,6 +72,9 @@ async function loadSettings() {
   document.getElementById("usernameHighlight").checked = settings.usernameHighlight;
   document.getElementById("pauseChatOnHover").checked = settings.pauseChatOnHover;
   document.getElementById("modDragHandle").checked = settings.modDragHandle;
+  document.getElementById("mentionHighlight").checked = settings.mentionHighlight;
+  document.getElementById("mentionNotifications").checked = settings.mentionNotifications;
+  document.getElementById("mentionAliases").value = settings.mentionAliases || "";
 
   document.getElementById("chatFontSize").value = settings.chatFontSize;
   document.getElementById("chatFontSizeValue").textContent = settings.chatFontSize + "px";
@@ -80,7 +86,6 @@ async function loadSettings() {
 
   // MA settings
   document.getElementById("maEnabled").checked = ma.enabled;
-  document.getElementById("maCheckModOnly").checked = ma.checkModOnly !== false;
   document.getElementById("maTriggerConsec").value = ma.triggerConsecutive ?? 3;
   document.getElementById("maTriggerConsecValue").textContent = ma.triggerConsecutive ?? 3;
   document.getElementById("maAutoClose").value = ma.autoCloseSecs ?? 15;
@@ -99,6 +104,9 @@ async function saveSettings() {
     modDragHandle: document.getElementById("modDragHandle").checked,
     chatFontSize: parseFloat(document.getElementById("chatFontSize").value),
     messageSpacingPx: parseInt(document.getElementById("messageSpacingPx").value, 10),
+    mentionHighlight: document.getElementById("mentionHighlight").checked,
+    mentionNotifications: document.getElementById("mentionNotifications").checked,
+    mentionAliases: document.getElementById("mentionAliases").value.trim(),
   };
   await chrome.storage.sync.set({ [STORAGE_KEY]: settings });
 }
@@ -129,12 +137,25 @@ document.getElementById("messageSpacingPx").addEventListener("input", (e) => {
   saveSettings();
 });
 
+// Mention aliases – textový input, debounce při psaní
+let mentionAliasesSaveTimer = null;
+document.getElementById("mentionAliases").addEventListener("input", () => {
+  if (mentionAliasesSaveTimer) clearTimeout(mentionAliasesSaveTimer);
+  mentionAliasesSaveTimer = setTimeout(saveSettings, 400);
+});
+
+// Notifikace – při zapnutí požádej o permission v aktivní tab
+document.getElementById("mentionNotifications").addEventListener("change", async (e) => {
+  if (!e.target.checked) return;
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission === "default") {
+    try { await Notification.requestPermission(); } catch (_) {}
+  }
+});
+
 // MA toggles
 document.getElementById("maEnabled").addEventListener("change", (e) => {
   saveMaSettings({ enabled: e.target.checked });
-});
-document.getElementById("maCheckModOnly").addEventListener("change", (e) => {
-  saveMaSettings({ checkModOnly: e.target.checked });
 });
 document.getElementById("maTriggerConsec").addEventListener("input", (e) => {
   document.getElementById("maTriggerConsecValue").textContent = e.target.value;

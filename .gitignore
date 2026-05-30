@@ -17,3 +17,6 @@ Thumbs.db
 *.log
 dist/
 build/
+
+# Claude Code session data
+.claude/

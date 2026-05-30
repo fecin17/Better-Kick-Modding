@@ -5,8 +5,33 @@
  * 3. Provádí authenticated fetch na žádost content scriptu
  */
 (function () {
+  // Debug log helper – tichý v produkci; zapni přes `localStorage.kceDebug = '1'` + reload
+  const KCE_DEBUG = (() => {
+    try { return localStorage.getItem("kceDebug") === "1"; } catch { return false; }
+  })();
+  const kceLog = KCE_DEBUG ? console.log.bind(console) : () => {};
+
   const capturedHeaders = {};
-  const messageStore = new Map();
+  const messageStore = new Map();   // username -> [{id, time, content}]
+
+  // TTL pro WebSocket message store: dlouhé streamy by jinak držely tisíce userů × 200 zpráv.
+  const MSG_TTL_MS = 30 * 60 * 1000;     // zprávy starší 30 min vyhodit
+  const MSG_MAX_USERS = 1000;
+  function evictMessageStore() {
+    const now = Date.now();
+    for (const [user, list] of messageStore) {
+      const fresh = list.filter((m) => now - m.time <= MSG_TTL_MS);
+      if (fresh.length) messageStore.set(user, fresh);
+      else messageStore.delete(user);
+    }
+    if (messageStore.size > MSG_MAX_USERS) {
+      const sorted = [...messageStore.entries()].sort(
+        (a, b) => (a[1].at(-1)?.time || 0) - (b[1].at(-1)?.time || 0)
+      );
+      for (const [u] of sorted.slice(0, messageStore.size - MSG_MAX_USERS)) messageStore.delete(u);
+    }
+  }
+  setInterval(evictMessageStore, 60000);
 
   const OrigWebSocket = window.WebSocket;
   window.WebSocket = new Proxy(OrigWebSocket, {
@@ -17,15 +42,27 @@
           const parsed = JSON.parse(event.data);
           let inner = parsed.data;
           if (typeof inner === "string") inner = JSON.parse(inner);
-          if (inner && inner.id && (inner.sender || inner.user || inner.chatMessage)) {
-            const msg = inner.chatMessage || inner;
-            const username = (msg.sender?.username || msg.sender?.slug || msg.user?.username || "").toLowerCase();
-            if (username) {
-              if (!messageStore.has(username)) messageStore.set(username, []);
-              const list = messageStore.get(username);
-              list.push({ id: String(msg.id), time: Date.now(), content: (msg.content || "").slice(0, 100) });
-              if (list.length > 200) list.splice(0, list.length - 200);
-            }
+          if (!inner || !inner.id || !(inner.sender || inner.user || inner.chatMessage)) return;
+
+          const msg = inner.chatMessage || inner;
+          const usernameRaw = msg.sender?.username || msg.sender?.slug || msg.user?.username || "";
+          if (!usernameRaw) return;
+          const username = usernameRaw.toLowerCase();
+          const content = (msg.content || "").trim();
+          const messageId = String(msg.id);
+
+          // 1) Ulož do store pro budoucí lookup při smazání zprávy
+          if (!messageStore.has(username)) messageStore.set(username, []);
+          const list = messageStore.get(username);
+          list.push({ id: messageId, time: Date.now(), content: content.slice(0, 100) });
+          if (list.length > 200) list.splice(0, list.length - 200);
+
+          // 2) Vystřel event pro Moderation Assist – detekce zpráv přímo z Pusher streamu
+          //    je 100% spolehlivá (žádný DOM parsing, žádná race condition s renderem).
+          if (content) {
+            document.dispatchEvent(new CustomEvent("kce-new-chat-message", {
+              detail: { username: usernameRaw, content, messageId, time: Date.now() }
+            }));
           }
         } catch (_) {}
       });
@@ -93,8 +130,10 @@
       const clean = content.replace(/\s+/g, " ").trim().slice(0, 80);
       match = [...list].reverse().find(m => clean.includes(m.content.slice(0, 30)) || m.content.includes(clean.slice(0, 30)));
     }
-    if (!match && list.length) match = list[list.length - 1];
-    console.log("[KCE-Bridge] lookup:", slug, "stored:", list.length, "match:", match?.id || "none");
+    // Fallback "poslední zpráva uživatele" použijeme jen pokud volající content NEPOSLAL.
+    // Když content přijde a nesedne, vracíme null – jinak by se smazala náhodná zpráva.
+    if (!match && !content && list.length) match = list[list.length - 1];
+    kceLog("[KCE-Bridge] lookup:", slug, "stored:", list.length, "match:", match?.id || "none");
     document.dispatchEvent(new CustomEvent("kce-lookup-result", {
       detail: { id, messageId: match?.id || null, storedCount: list.length }
     }));

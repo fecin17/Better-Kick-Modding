@@ -7,49 +7,73 @@
 :root {
   --kce-font-size: 13px;
   --kce-msg-spacing: 0px;
+
+  /* Z-index hierarchie – sjednocená, snadno čitelná.
+     Hodnoty jsou daleko za Kickovými layout vrstvy (1-999) ale pod system-level
+     overlays. Pause-banner je vědomě nejvýše, aby překryl Kickovo "Chat paused". */
+  --kce-z-mod-handle: 2;
+  --kce-z-resize-handle: 50;
+  --kce-z-mod-toast: 9000;
+  --kce-z-ma-popup: 9100;
+  --kce-z-ma-welcome: 9200;
+  --kce-z-ban-confirm: 9300;
+  --kce-z-pause-banner: 9999;
 }
 
 /* =========================================================================
    MEZERY MEZI ZPRÁVAMI
-   Kick virtualizér používá position:absolute + translateY na div[data-index].
-   Padding na těchto prvcích ZVÝŠÍ jejich measured height, a virtualizér
-   přepočítá translateY pozice. Pravidla platí JEN když je spacing zapnutý.
+   Kick virtualizér používá position:absolute + translateY na div[data-index]
+   a CACHE-uje jeho offsetHeight. Aplikování paddingu PŘÍMO na div[data-index]
+   mění measured height a virtualizér přepočítá pozice -> chat skáče.
+   ŘEŠENÍ: spacing dáváme na .chat-entry / [data-chat-entry] / .kce-message
+   (= reálný obsah uvnitř virtual rowy). Jeho extra padding sice taky lehce
+   ovlivní outer height, ale virtualizér pak měří stabilní hodnotu místo
+   skokově se měnící.
    ========================================================================= */
 
-[data-kce-message-spacing="1"] div[data-index],
-[data-kce-message-spacing="1"] [data-chat-entry],
+/* Padding aplikujeme jen na .kce-message – tu content.js přidává POUZE
+   na outermost element zprávy (sekce 1 deduplikuje vnořené wrapy).
+   Tím se padding sčítá pouze jednou, ne 2× při vnořené struktuře. */
 [data-kce-message-spacing="1"] .kce-message {
   padding-top: var(--kce-msg-spacing) !important;
   padding-bottom: var(--kce-msg-spacing) !important;
 }
 
-/* ===== VLASTNÍ VELIKOST PÍSMA V CHATU ===== */
+/* ===== VLASTNÍ VELIKOST PÍSMA V CHATU =====
+   Aplikujeme přímo na každý textový potomek (span/a/p/div) uvnitř řádku zprávy.
+   `inherit` přístup selhal: pokud má Kick mezi řádkem a textem vlastní wrapper
+   se svou font-size, descendent dědil od něj místo z .kce-message.
+   `:not()` chrání 7TV emote elementy. */
 div[data-index],
 div[data-index] span:not([class*="seventv"]):not([class*="7tv"]),
 div[data-index] a:not([class*="seventv"]):not([class*="7tv"]),
 div[data-index] p:not([class*="seventv"]):not([class*="7tv"]),
-div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*="seventv"]):not([class*="7tv"]),
+div[data-index] div:not(.kce-mod-handle):not([class*="seventv"]):not([class*="7tv"]),
 [data-chat-entry],
 [data-chat-entry] span:not([class*="seventv"]):not([class*="7tv"]),
 [data-chat-entry] a:not([class*="seventv"]):not([class*="7tv"]),
 [data-chat-entry] p:not([class*="seventv"]):not([class*="7tv"]),
-[data-chat-entry] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*="seventv"]):not([class*="7tv"]),
+[data-chat-entry] div:not(.kce-mod-handle):not([class*="seventv"]):not([class*="7tv"]),
+.chat-entry,
+.chat-entry span:not([class*="seventv"]):not([class*="7tv"]),
+.chat-entry a:not([class*="seventv"]):not([class*="7tv"]),
+.chat-entry p:not([class*="seventv"]):not([class*="7tv"]),
+.chat-entry div:not(.kce-mod-handle):not([class*="seventv"]):not([class*="7tv"]),
 .kce-message,
 .kce-message span:not([class*="seventv"]):not([class*="7tv"]),
 .kce-message a:not([class*="seventv"]):not([class*="7tv"]),
 .kce-message p:not([class*="seventv"]):not([class*="7tv"]),
-.kce-message div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*="seventv"]):not([class*="7tv"]),
-[class*="chatroom"] [class*="scroll"] span:not([class*="seventv"]):not([class*="7tv"]),
-[class*="chatroom"] [class*="scroll"] a:not([class*="seventv"]):not([class*="7tv"]),
-[class*="chatroom"] [class*="scroll"] p:not([class*="seventv"]):not([class*="7tv"]) {
+.kce-message div:not(.kce-mod-handle):not([class*="seventv"]):not([class*="7tv"]) {
   font-size: var(--kce-font-size) !important;
 }
 
 /* ===== VIZUÁLNÍ ODDĚLENÍ ZPRÁV (hover efekt) ===== */
 [data-kce-visual-separation="1"] [data-chat-entry],
+[data-kce-visual-separation="1"] .chat-entry,
 [data-kce-visual-separation="1"] .kce-message,
 [data-kce-visual-separation="1"] div[data-index],
 :host-context([data-kce-visual-separation="1"]) [data-chat-entry],
+:host-context([data-kce-visual-separation="1"]) .chat-entry,
 :host-context([data-kce-visual-separation="1"]) .kce-message {
   padding-left: 4px !important;
   padding-right: 4px !important;
@@ -58,9 +82,11 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*
 }
 
 [data-kce-visual-separation="1"] [data-chat-entry]:hover,
+[data-kce-visual-separation="1"] .chat-entry:hover,
 [data-kce-visual-separation="1"] .kce-message:hover,
 [data-kce-visual-separation="1"] div[data-index]:hover,
 :host-context([data-kce-visual-separation="1"]) [data-chat-entry]:hover,
+:host-context([data-kce-visual-separation="1"]) .chat-entry:hover,
 :host-context([data-kce-visual-separation="1"]) .kce-message:hover {
   background-color: rgba(255, 255, 255, 0.04) !important;
 }
@@ -98,9 +124,11 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*
 /* Uživatelská jména (profilové odkazy) */
 [data-kce-username-highlight="1"] [class*="chatroom"] div[data-index] a[href*="/"]:first-of-type,
 [data-kce-username-highlight="1"] [class*="chatroom"] [data-chat-entry] a[href*="/"]:first-of-type,
+[data-kce-username-highlight="1"] [class*="chatroom"] .chat-entry a[href*="/"]:first-of-type,
 [data-kce-username-highlight="1"] [class*="chatroom"] .kce-message a[href*="/"]:first-of-type,
 [data-kce-username-highlight="1"] [class*="chatroom"] a[class*="username"],
-[data-kce-username-highlight="1"] [class*="chatroom"] a[class*="chat-entry-username"] {
+[data-kce-username-highlight="1"] [class*="chatroom"] a[class*="chat-entry-username"],
+[data-kce-username-highlight="1"] [class*="chatroom"] [data-radial-username] {
   font-weight: 700 !important;
   text-shadow: 0 0 6px currentColor !important;
 }
@@ -113,6 +141,28 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*
   text-decoration: underline !important;
   text-decoration-color: rgba(125, 211, 252, 0.6) !important;
   text-shadow: 0 0 8px rgba(125, 211, 252, 0.4) !important;
+}
+
+/* ===== @MENTION HIGHLIGHT ===== */
+/* Zpráva, kde tě někdo zmínil – zlato-žlutý border vlevo + jemné pozadí.
+   Třída se přidává z content.js po vyhodnocení WebSocket eventu. */
+[data-kce-mention-highlight="1"] .kce-mention,
+:host-context([data-kce-mention-highlight="1"]) .kce-mention {
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.14) 0%, rgba(251, 191, 36, 0.02) 100%) !important;
+  border-left: 3px solid rgba(251, 191, 36, 0.85) !important;
+  padding-left: 8px !important;
+  border-radius: 0 6px 6px 0 !important;
+}
+
+/* Krátká blink animace 1× po doručení – jemné upozornění */
+.kce-mention-blink {
+  animation: kce-mention-flash 1.5s ease-out;
+}
+
+@keyframes kce-mention-flash {
+  0%   { background-color: rgba(251, 191, 36, 0.45) !important; box-shadow: 0 0 12px rgba(251, 191, 36, 0.4); }
+  60%  { background-color: rgba(251, 191, 36, 0.18) !important; box-shadow: 0 0 6px rgba(251, 191, 36, 0.2); }
+  100% { box-shadow: 0 0 0 rgba(251, 191, 36, 0); }
 }
 
 /* ===== POSUVNÍK (SCROLLBAR) ===== */
@@ -165,7 +215,7 @@ div[data-index] div:not(.kce-mod-handle):not(.kce-mod-handle-column):not([class*
   font-weight: bold !important;
   user-select: none !important;
   -webkit-user-select: none !important;
-  z-index: 1 !important;
+  z-index: var(--kce-z-mod-handle) !important;
   pointer-events: auto !important;
   background: rgba(255, 255, 255, 0.06) !important;
   border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -209,7 +259,7 @@ div[data-index] {
   margin-left: -3px !important;
   margin-right: -3px !important;
   cursor: col-resize !important;
-  z-index: 10000 !important;
+  z-index: var(--kce-z-resize-handle) !important;
   background: transparent !important;
   transition: background 0.15s ease !important;
   flex-shrink: 0 !important;
@@ -231,30 +281,27 @@ div[data-index] {
 /* ── Welcome pill (top-right, nad chatem) ─────────────── */
 .kce-ma-welcome {
   position: fixed !important;
-  top: 66px !important;
-  right: 12px !important;
-  z-index: 100004 !important;
+  top: 72px !important;
+  right: 16px !important;
+  z-index: var(--kce-z-ma-welcome) !important;
   display: flex !important;
   align-items: center !important;
-  gap: 8px !important;
-  padding: 8px 16px 8px 12px !important;
-  background: rgba(13, 14, 20, 0.98) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-  border: 1px solid rgba(83, 252, 24, 0.45) !important;
+  gap: 6px !important;
+  padding: 6px 12px 6px 10px !important;
+  background: rgba(18, 19, 26, 0.96) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(83, 252, 24, 0.3) !important;
   border-radius: 999px !important;
-  box-shadow:
-    0 0 18px rgba(83, 252, 24, 0.18),
-    0 4px 28px rgba(0,0,0,0.6),
-    inset 0 1px 0 rgba(255,255,255,0.06) !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
   font-family: system-ui, -apple-system, sans-serif !important;
-  font-size: 12.5px !important;
+  font-size: 11px !important;
   font-weight: 600 !important;
-  color: #fff !important;
+  color: rgba(255,255,255,0.9) !important;
   pointer-events: none !important;
   white-space: nowrap !important;
-  animation: kce-ma-slide-in 0.35s cubic-bezier(0.16,1,0.3,1) both !important;
-  transition: opacity 0.22s ease, transform 0.22s ease !important;
+  animation: kce-ma-slide-in 0.25s ease both !important;
+  transition: opacity 0.2s ease, transform 0.2s ease !important;
 }
 .kce-ma-welcome-out {
   animation: kce-ma-slide-out 0.22s ease forwards !important;
@@ -272,44 +319,42 @@ div[data-index] {
 /* ── Alert popup (top-right, nad chatem) ─────────────── */
 .kce-ma-popup {
   position: fixed !important;
-  top: 66px !important;
-  right: 12px !important;
-  width: 300px !important;
-  background: rgba(14, 15, 22, 0.98) !important;
-  backdrop-filter: blur(28px) saturate(2) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(2) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  border-radius: 14px !important;
+  top: 72px !important;
+  right: 16px !important;
+  width: 260px !important;
+  z-index: var(--kce-z-ma-popup) !important;
+  background: rgba(18, 19, 26, 0.97) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  border-radius: 10px !important;
   box-shadow:
-    0 0 0 1px rgba(255,255,255,0.05) inset,
-    0 0 28px rgba(249, 115, 22, 0.18),
-    0 12px 48px rgba(0,0,0,0.7),
-    0 2px 10px rgba(0,0,0,0.4) !important;
-  z-index: 100003 !important;
+    0 6px 20px rgba(0,0,0,0.5),
+    0 1px 3px rgba(0,0,0,0.3) !important;
   overflow: hidden !important;
   font-family: system-ui, -apple-system, sans-serif !important;
-  font-size: 13px !important;
+  font-size: 12.5px !important;
   color: rgba(255,255,255,0.92) !important;
   pointer-events: auto !important;
-  animation: kce-ma-pop-in 0.42s cubic-bezier(0.16,1,0.3,1) both !important;
-  transition: opacity 0.28s ease, transform 0.28s ease !important;
+  animation: kce-ma-pop-in 0.25s cubic-bezier(0.2,0.9,0.3,1) both !important;
+  transition: opacity 0.2s ease, transform 0.2s ease !important;
 }
 
-/* Kick-style top accent strip */
+/* Subtle top accent strip */
 .kce-ma-popup::before {
   content: "" !important;
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
   right: 0 !important;
-  height: 2.5px !important;
-  background: linear-gradient(90deg, #53fc18 0%, #f97316 50%, #7c3aed 100%) !important;
+  height: 2px !important;
+  background: linear-gradient(90deg, #f59e0b 0%, #ef4444 100%) !important;
   z-index: 2 !important;
 }
 
 .kce-ma-popup-out {
   opacity: 0 !important;
-  transform: translateX(24px) scale(0.97) !important;
+  transform: translateX(16px) !important;
 }
 
 /* Top bar */
@@ -367,22 +412,21 @@ div[data-index] {
 }
 
 .kce-ma-avatar {
-  width: 36px !important;
-  height: 36px !important;
+  width: 28px !important;
+  height: 28px !important;
   border-radius: 50% !important;
   background: linear-gradient(135deg, #dc2626 0%, #f97316 100%) !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  font-size: 16px !important;
-  font-weight: 800 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
   color: #fff !important;
   flex-shrink: 0 !important;
-  box-shadow: 0 0 16px rgba(220,38,38,0.45) !important;
 }
 
 .kce-ma-username {
-  font-size: 15px !important;
+  font-size: 13px !important;
   font-weight: 700 !important;
   color: #fff !important;
   line-height: 1.2 !important;
@@ -562,9 +606,8 @@ div[data-index] {
   to   { transform: translateX(28px); opacity: 0; }
 }
 @keyframes kce-ma-pop-in {
-  0%   { transform: translateX(30px) scale(0.94); opacity: 0; filter: blur(4px); }
-  65%  { transform: translateX(-4px) scale(1.01); opacity: 1; filter: blur(0);   }
-  100% { transform: translateX(0)    scale(1);    opacity: 1; filter: blur(0);   }
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
 }
 @keyframes kce-ma-dot-pulse {
   0%,100% { box-shadow: 0 0 5px rgba(83,252,24,0.8); }

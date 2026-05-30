@@ -9,6 +9,12 @@
 
   const STORAGE_KEY = "kickChatEnhancerSettings";
 
+  // Debug log helper – v produkci tichý; zapni v konzoli přes `localStorage.kceDebug = '1'` a reload
+  const KCE_DEBUG = (() => {
+    try { return localStorage.getItem("kceDebug") === "1"; } catch { return false; }
+  })();
+  const kceLog = KCE_DEBUG ? console.log.bind(console) : () => {};
+
   const defaultSettings = {
     messageSpacing: true,
     visualSeparation: true,
@@ -18,7 +24,10 @@
     pauseChatOnHover: true,
     modDragHandle: true,
     chatFontSize: 13,
-    messageSpacingPx: 5,
+    messageSpacingPx: 2,
+    mentionHighlight: true,
+    mentionNotifications: false,
+    mentionAliases: "",
   };
 
   let cachedCss = null;
@@ -87,10 +96,17 @@
     html.dataset.kceUsernameHighlight = settings.usernameHighlight ? "1" : "0";
     html.dataset.kcePauseChatOnHover = settings.pauseChatOnHover ? "1" : "0";
     html.dataset.kceModDrag = settings.modDragHandle ? "1" : "0";
+    html.dataset.kceMentionHighlight = settings.mentionHighlight ? "1" : "0";
     const fontSize = settings.chatFontSize || 13;
     html.style.setProperty("--kce-font-size", fontSize + "px");
-    const msgSpacing = settings.messageSpacingPx ?? 5;
+    const msgSpacing = settings.messageSpacingPx ?? 2;
     html.style.setProperty("--kce-msg-spacing", msgSpacing + "px");
+    // Mention nastavení do globálních flagů (mention regex se sestavuje samostatně)
+    kceMentionsEnabled = !!settings.mentionHighlight;
+    kceMentionNotifications = !!settings.mentionNotifications;
+    kceMentionAliases = (settings.mentionAliases || "")
+      .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    rebuildMentionRegex();
     if (!settings.modDragHandle) {
       querySelectorAllDeep(document.body, ".kce-mod-handle").forEach((h) => h.remove());
     }
@@ -119,12 +135,16 @@
    * Primárně kotví přes input "Send a message" – ten existuje POUZE v chatu,
    * nikdy ve Stream Videos / Clips / Following sekci.
    */
+  // Substringy v placeholderu chat inputu – pokrýváme EN i CZ lokalizaci Kicku.
+  // ("zpráv" pokrývá "Odeslat zprávu", "Napsat zprávu"; "odesl" je dodatečná pojistka.)
+  const CHAT_INPUT_PLACEHOLDER_HINTS = ["message", "send", "chat", "zpráv", "odesl", "napsat"];
+
   function findChatroomEl() {
     // 1. Kotva přes "Send a message" input – nejspolehlivější
     const inputs = document.querySelectorAll("input[placeholder], textarea[placeholder]");
     for (const input of inputs) {
       const ph = (input.getAttribute("placeholder") || "").toLowerCase();
-      if (!ph.includes("message") && !ph.includes("send") && !ph.includes("chat")) continue;
+      if (!CHAT_INPUT_PLACEHOLDER_HINTS.some((hint) => ph.includes(hint))) continue;
       let p = input.parentElement;
       for (let i = 0; i < 15 && p && p !== document.body; i++, p = p.parentElement) {
         if (p.offsetHeight > 200) return p;
@@ -152,15 +172,35 @@
     const chatroomEl = base === doc ? findChatroomEl() : (base instanceof ShadowRoot ? base : base);
     const effectiveBase = chatroomEl ?? base;
 
-    // 1. data-chat-entry
-    querySelectorAllDeep(effectiveBase, "[data-chat-entry]").forEach((el) => {
+    // 1. data-chat-entry + .chat-entry – primární selektor pro řádek zprávy.
+    // Kick používá v různých verzích buď `data-chat-entry` atribut, nebo `.chat-entry` třídu;
+    // občas oba současně ve vnořené struktuře (např. `.chat-entry > [data-chat-entry]`).
+    // Deduplikujeme – ponecháme pouze nejvyšší (outer) element, aby se padding ani mod-handle
+    // nepřidaly dvakrát na rodiče i potomka.
+    const primaryAll = querySelectorAllDeep(effectiveBase, "[data-chat-entry], .chat-entry");
+    const primaryOutermost = primaryAll.filter(
+      (el) => !primaryAll.some((other) => other !== el && other.contains(el))
+    );
+    // Inner duplikáty z dřívějších běhů: odstraň .kce-message + .kce-mod-handle u elementů,
+    // které jsou uvnitř outermost zprávy (= byly označené předchozí verzí kódu).
+    primaryAll.forEach((el) => {
+      if (primaryOutermost.includes(el)) return;
+      el.classList.remove("kce-message");
+      el.querySelectorAll(":scope > .kce-mod-handle").forEach((h) => h.remove());
+    });
+    primaryOutermost.forEach((el) => {
       addEnhancementClass(el, "message");
       ensureModHandle(el);
       tagLinkHighlights(el);
     });
 
-    // 2. Třídy chat-entry, chatEntry, message-row
-    querySelectorAllDeep(effectiveBase, "[class*='chat-entry'], [class*='chatEntry'], [class*='message-row']").forEach((el) => {
+    // 2. Variantní třídy (chatEntry camelCase, message-row) – stejná dedup logika
+    const variantAll = querySelectorAllDeep(effectiveBase, "[class*='chatEntry'], [class*='message-row']");
+    const variantOutermost = variantAll.filter(
+      (el) => !variantAll.some((other) => other !== el && other.contains(el)) &&
+              !primaryOutermost.some((p) => p.contains(el))
+    );
+    variantOutermost.forEach((el) => {
       addEnhancementClass(el, "message");
       ensureModHandle(el);
       tagLinkHighlights(el);
@@ -233,28 +273,37 @@
       }
     });
 
-    // 5. Třídy message/line/entry/row – prohledáváme POUZE searchRootForIndex (chatroom)
-    querySelectorAllDeep(searchRootForIndex, "[class*='message'], [class*='Message'], [class*='line'], [class*='Line'], [class*='entry'], [class*='Entry'], [class*='row'], [class*='Row']").forEach((el) => {
-      if (seen.has(el)) return;
-      const hasLink = el.querySelector?.("a[href]");
-      const hasColon = (el.textContent || "").includes(":");
-      const hasEmote = el.querySelector?.("img");
-      if ((hasLink && hasColon) || hasEmote) {
-        const reasonable = el.childNodes.length >= 1 && el.childNodes.length <= 80;
-        if (reasonable) {
-          seen.add(el);
-          addEnhancementClass(el, "message");
-          ensureModHandle(el);
-          tagLinkHighlights(el);
+    // 5. Široký fallback – jen pokud sekce 1-4 nenašly NIC.
+    // Tento selektor projde tisíce uzlů, takže ho používáme až jako poslední záchranu
+    // (např. když Kick nasadí úplně novou DOM strukturu bez data-chat-entry/.chat-entry).
+    const alreadyTagged = querySelectorAllDeep(searchRootForIndex, ".kce-message").length;
+    if (alreadyTagged === 0 && seen.size === 0) {
+      querySelectorAllDeep(searchRootForIndex, "[class*='message'], [class*='Message'], [class*='line'], [class*='Line'], [class*='entry'], [class*='Entry'], [class*='row'], [class*='Row']").forEach((el) => {
+        if (seen.has(el)) return;
+        const hasLink = el.querySelector?.("a[href]");
+        const hasColon = (el.textContent || "").includes(":");
+        const hasEmote = el.querySelector?.("img");
+        if ((hasLink && hasColon) || hasEmote) {
+          const reasonable = el.childNodes.length >= 1 && el.childNodes.length <= 80;
+          if (reasonable) {
+            seen.add(el);
+            addEnhancementClass(el, "message");
+            ensureModHandle(el);
+            tagLinkHighlights(el);
+          }
         }
-      }
-    });
-
+      });
+    }
   }
 
   function ensureModHandle(entryEl) {
     if (document.documentElement.dataset.kceModDrag !== "1") return;
+    // Mod handle se zobrazuje JEN moderátorům aktuálního kanálu.
+    // Dokud check není hotový, neukazujeme handle (po dokončení tagChatMessages doběhne).
+    if (kceModCheckPending || !kceUserIsModerator) return;
     if (entryEl.querySelector(".kce-mod-handle")) return;
+    // Pojistka: nevkládat handle pokud je entry uvnitř jiné označené zprávy (vnořený duplikát)
+    if (entryEl.parentElement?.closest?.(".kce-message")) return;
     const root = entryEl.getRootNode();
     if (root instanceof ShadowRoot) injectCssIntoRoot(root);
     const handle = document.createElement("div");
@@ -277,7 +326,16 @@
     return null;
   }
 
+  // WeakMap cache – framework state se v rámci jedné zprávy nemění,
+  // ale getMessageData se může volat opakovaně (drag handle re-tag, retry akce).
+  const _frameworkCache = new WeakMap();
   function extractFrameworkData(el) {
+    if (_frameworkCache.has(el)) return _frameworkCache.get(el);
+    const result = _extractFrameworkDataImpl(el);
+    if (result) _frameworkCache.set(el, result);
+    return result;
+  }
+  function _extractFrameworkDataImpl(el) {
     const nodes = [];
     const walk = (n, d) => {
       if (d > 6 || !n) return;
@@ -390,30 +448,16 @@
       }
     }
 
-    // --- DIAGNOSTIC (temporary) ---
-    if (!messageId || !username) {
-      const fwKeys = new Set();
-      const scanFw = (n, d) => {
-        if (d > 4) return;
-        try { Object.keys(n).filter(k => k.startsWith("__")).forEach(k => fwKeys.add(k.slice(0, 35))); } catch (_) {}
-        for (const c of n.children || []) scanFw(c, d + 1);
-      };
-      scanFw(entryEl, 0);
-      const allData = {};
-      const scanData = (n, d) => {
-        if (d > 4) return;
-        if (n.dataset) for (const [k, v] of Object.entries(n.dataset)) { if (k !== "kceInternal") allData[k] = v; }
-        for (const c of n.children || []) scanData(c, d + 1);
-      };
-      scanData(entryEl, 0);
-      console.log("[KCE] DIAG entry tag:", entryEl.tagName, "classes:", entryEl.className?.slice(0, 100));
-      console.log("[KCE] DIAG framework keys:", [...fwKeys]);
-      console.log("[KCE] DIAG data-* attrs:", allData);
-      console.log("[KCE] DIAG innerHTML (500):", entryEl.innerHTML?.slice(0, 500));
-      console.log("[KCE] DIAG links:", [...entryEl.querySelectorAll("a")].map(a => ({ href: a.getAttribute("href"), text: a.textContent?.trim()?.slice(0, 30) })));
+    if (KCE_DEBUG && (!messageId || !username)) {
+      // Diagnostika, pokud se nepodařilo vytáhnout message ID / username.
+      // V DevTools si pak můžeš zprávu inspectovat manuálně přes selektor.
+      kceLog("[KCE] DIAG missing data:", {
+        tag: entryEl.tagName,
+        classes: entryEl.className?.slice(0, 100),
+        innerHTML: entryEl.innerHTML?.slice(0, 200),
+      });
     }
-
-    console.log("[KCE] Message data:", { channel, messageId, username, fwFound: !!fw });
+    kceLog("[KCE] Message data:", { channel, messageId, username, fwFound: !!fw });
     return { channel, messageId, username, messageText: (entryEl.textContent || "").trim().slice(0, 200) };
   }
 
@@ -483,7 +527,7 @@
     const toast = document.createElement("div");
     toast.className = "kce-mod-toast";
     toast.textContent = message;
-    toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:100000;" +
+    toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:9000;" +
       "padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;color:#fff;" +
       "box-shadow:0 4px 12px rgba(0,0,0,0.4);pointer-events:none;opacity:0;transition:opacity 0.3s;" +
       "background:" + (success ? "rgba(34,197,94,0.95)" : "rgba(239,68,68,0.95)") + ";";
@@ -500,7 +544,7 @@
     if (existing) existing.remove();
     const overlay = document.createElement("div");
     overlay.className = "kce-ban-confirm";
-    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:100001;" +
+    overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:9300;" +
       "background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;";
     const box = document.createElement("div");
     box.style.cssText = "background:#1a1a2e;border:1px solid rgba(255,255,255,0.15);border-radius:12px;" +
@@ -547,6 +591,9 @@
       modDragIntervalId = null;
     }
     if (!settings.modDragHandle) return;
+    // Mod handle: MutationObserver v observeChat() volá tagChatMessages() při každé změně
+    // chatu, takže nepotřebujeme samostatný 1500ms interval. Zachováváme jen safety-net
+    // tag každých 10s pro případ, že by Kick re-renderoval bez MutationObserver triggeru.
     modDragIntervalId = setInterval(() => {
       if (document.documentElement.dataset.kceModDrag !== "1") {
         clearInterval(modDragIntervalId);
@@ -554,7 +601,7 @@
         return;
       }
       tagChatMessages();
-    }, 1500);
+    }, 10000);
 
     let drag = null;
 
@@ -645,12 +692,12 @@
     const base = "https://kick.com";
     const xsrf = getXsrfToken();
     const slug = username ? username.toLowerCase() : null;
-    console.log("[KCE] API:", action, "ch:", channel, "user:", slug, "xsrf:", xsrf ? "yes" : "NO!");
+    kceLog("[KCE] API:", action, "ch:", channel, "user:", slug, "xsrf:", xsrf ? "yes" : "NO!");
 
     async function tryFetch(url, opts) {
       const fetchOpts = { credentials: "include", ...opts };
       const r = await pageContextFetch(url, fetchOpts);
-      console.log("[KCE]", r.ok ? "OK" : "FAIL", r.status, url.replace(base, ""), r.ok ? "" : r.text?.slice(0, 150));
+      kceLog("[KCE]", r.ok ? "OK" : "FAIL", r.status, url.replace(base, ""), r.ok ? "" : r.text?.slice(0, 150));
       return r;
     }
 
@@ -668,9 +715,9 @@
         let targetId = messageId;
         if (!targetId && slug) {
           const msgText = payload.messageText || "";
-          console.log("[KCE] Delete: lookup přes WebSocket store pro:", slug);
+          kceLog("[KCE] Delete: lookup přes WebSocket store pro:", slug);
           const lookup = await lookupMessageId(slug, msgText);
-          console.log("[KCE] Delete: lookup result:", lookup);
+          kceLog("[KCE] Delete: lookup result:", lookup);
           if (lookup.messageId) targetId = lookup.messageId;
         }
         if (!targetId) return { ok: false, error: "Zpráva nenalezena (uživatel: " + slug + "). Zpráva musí přijít přes chat než ji lze smazat." };
@@ -715,6 +762,14 @@
   }
 
   function executeModAction(info, data) {
+    if (kceModCheckPending) {
+      showModToast("Čekám na ověření moderátorského statusu…", false);
+      return;
+    }
+    if (!kceUserIsModerator) {
+      showModToast("Tato akce je dostupná jen moderátorům kanálu", false);
+      return;
+    }
     if (!data.channel) { showModToast("Nepodařilo se zjistit kanál", false); return; }
     if (!data.username && !data.messageId) {
       showModToast("Nepodařilo se zjistit uživatele ani ID zprávy", false);
@@ -763,56 +818,242 @@
   };
 
   let maSettings = { ...MA_DEFAULT_SETTINGS };
-  let maIsMod = true;   // optimisticky – nastavíme false jen při pozitivním potvrzení "nejsi mod"
+  // BEZPEČNOSTNÍ FLAG: všechny moderátorské akce (drag swipe, MA tlačítka) jsou
+  // dostupné jen pokud potvrdíme, že uživatel je opravdu mod aktuálního kanálu.
+  // Dokud API neodpoví, jsme v "pending" stavu a akce blokujeme.
+  let kceUserIsModerator = false;
+  let kceModCheckPending = true;
+  let maIsMod = false;   // legacy alias – stále používaný uvnitř MA pro zpětnou kompatibilitu
   const maModCache = new Map();
-  const maUserHistory = new Map();
-  const maAlertCooldown = new Map();
-  const maUserLastTimeout = new Map();
+  const NON_CHANNEL_PATHS = new Set(["", "browse", "following", "categories", "subscriptions", "category", "search"]);
+
+  // Info o slow modu aktuálního kanálu – plněno z stejného API volání jako mod check.
+  // Sloužíme dvě věci: skrýt Kickovu nativní info-bublinu při hoveru a doplnit interval
+  // do existujícího "Slow mode activated" banneru jako "(Xs)".
+  let kceSlowModeInfo = { enabled: false, interval: 0 };
+
+  // Mention highlight – username přihlášeného uživatele + případné aliasy
+  let kceCurrentUsername = null;
+  let kceMentionRegex = null;
+  let kceMentionAliases = [];
+
+  async function detectCurrentUsername() {
+    if (kceCurrentUsername) return;
+    // 1. Zkusíme Kick API endpoint /api/v1/user
+    try {
+      const r = await pageContextFetch("https://kick.com/api/v1/user", {
+        credentials: "include", headers: buildApiHeaders(false)
+      });
+      if (r.ok) {
+        const data = JSON.parse(r.text);
+        const u = data?.username || data?.user?.username || data?.slug || data?.user?.slug;
+        if (u && typeof u === "string") {
+          kceCurrentUsername = u.toLowerCase();
+          rebuildMentionRegex();
+          kceLog("[KCE] detected username from API:", kceCurrentUsername);
+          return;
+        }
+      }
+    } catch (_) {}
+    // 2. Fallback – z DOMu (avatar profilové menu, vrch stránky)
+    try {
+      const avatarLink = document.querySelector(
+        "header a[href^='/'][class*='avatar'], header a[href^='/'] img[alt*='avatar'], a[data-test='avatar-link']"
+      );
+      if (avatarLink) {
+        const href = avatarLink.getAttribute("href") || avatarLink.closest("a")?.getAttribute("href");
+        const match = href && href.match(/^\/([A-Za-z][\w]{1,24})\/?/);
+        if (match) {
+          kceCurrentUsername = match[1].toLowerCase();
+          rebuildMentionRegex();
+          kceLog("[KCE] detected username from DOM:", kceCurrentUsername);
+        }
+      }
+    } catch (_) {}
+  }
+
+  function rebuildMentionRegex() {
+    const names = [kceCurrentUsername, ...kceMentionAliases].filter(Boolean);
+    if (!names.length) { kceMentionRegex = null; return; }
+    const escaped = names.map((n) => n.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"));
+    // @nick s nebo bez `@`, word boundary kolem, case-insensitive
+    kceMentionRegex = new RegExp(`(?:^|[\\s@])@?(${escaped.join("|")})(?=[\\s.,!?:;)\\]'"]|$)`, "i");
+  }
+
+  function isMentionInText(text) {
+    if (!kceMentionRegex || !text) return false;
+    return kceMentionRegex.test(text);
+  }
+
+  // Settings flag pro mention featuru – nastaven v applyEnhancements
+  let kceMentionsEnabled = true;
+  let kceMentionNotifications = false;
+
+  function handleMentionInMessage(fromUsername, content) {
+    if (!kceMentionsEnabled || !kceMentionRegex || !isMentionInText(content)) return;
+    // Zpráva ode mě samotného nepočítá jako mention sebe sama
+    if (fromUsername && fromUsername.toLowerCase() === kceCurrentUsername) return;
+
+    kceLog("[KCE] mention from", fromUsername, "→", content.slice(0, 80));
+
+    // Najdi v DOMu zprávu odpovídající content (WebSocket je rychlejší než DOM render)
+    const findAndTag = (attempt = 0) => {
+      const entries = querySelectorAllDeep(document.body, "[data-chat-entry], .chat-entry, .kce-message");
+      const needle = content.toLowerCase().slice(0, 40);
+      // Procházíme od konce – nejnovější zpráva má největší šanci být to ta
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        if (entry.dataset.kceMentionMatched) continue;
+        const entryText = (entry.textContent || "").toLowerCase();
+        if (entryText.includes(needle)) {
+          entry.dataset.kceMentionMatched = "1";
+          entry.classList.add("kce-mention");
+          entry.classList.add("kce-mention-blink");
+          setTimeout(() => entry.classList.remove("kce-mention-blink"), 1500);
+          return true;
+        }
+      }
+      // DOM ještě možná nezrenderoval – zkus znovu po krátkém čase
+      if (attempt < 5) setTimeout(() => findAndTag(attempt + 1), 200);
+      return false;
+    };
+    findAndTag();
+
+    // Desktop notifikace – jen pokud tab/okno není aktivní (jinak by to bylo otravné)
+    if (kceMentionNotifications && document.visibilityState !== "visible") {
+      showMentionNotification(fromUsername, content);
+    }
+  }
+
+  function showMentionNotification(from, text) {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "granted") return;
+    try {
+      const n = new Notification(`${from} tě zmínil v chatu`, {
+        body: text.slice(0, 140),
+        icon: chrome.runtime.getURL("icons/icon48.png"),
+        tag: "kce-mention",
+        silent: false,
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+      setTimeout(() => n.close(), 8000);
+    } catch (_) {}
+  }
+
+  async function requestNotificationPermission() {
+    if (typeof Notification === "undefined") return false;
+    if (Notification.permission === "granted") return true;
+    if (Notification.permission === "denied") return false;
+    try {
+      const result = await Notification.requestPermission();
+      return result === "granted";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function extractSlowModeInfo(data) {
+    // Slow mode info bývá pod různými klíči podle verze API – prohledáme nejčastější.
+    const candidates = [
+      data?.chatroom?.slow_mode,
+      data?.chatroom?.slowmode,
+      data?.slow_mode,
+      data?.slowmode,
+    ];
+    for (const sm of candidates) {
+      if (!sm || typeof sm !== "object") continue;
+      const enabled = !!(sm.enabled ?? sm.is_enabled ?? sm.active);
+      const interval = Number(sm.message_interval ?? sm.interval ?? sm.seconds ?? sm.duration ?? 0);
+      if (enabled || interval) return { enabled, interval };
+    }
+    // Některé API formáty vrací jen boolean + samostatný interval field
+    if (data?.chatroom?.slow_mode_enabled !== undefined) {
+      return {
+        enabled: !!data.chatroom.slow_mode_enabled,
+        interval: Number(data.chatroom.slow_mode_interval || data.chatroom.message_interval || 0),
+      };
+    }
+    return { enabled: false, interval: 0 };
+  }
+  const maUserHistory = new Map();        // username -> [{text, normalized, ts}]
+  const maAlertCooldown = new Map();      // username -> ts posledního alertu
+  const maUserLastTimeout = new Map();    // username -> sekundy posledního TO
   const maProcessedEntries = new WeakSet();
+
+  // TTL pro user-historii – starší zprávy než 10 min nemá smysl držet (mimo windowSeconds + buffer)
+  const MA_USER_HISTORY_TTL_MS = 10 * 60 * 1000;
+  const MA_COOLDOWN_TTL_MS = 5 * 60 * 1000;
+  const MA_MAX_TRACKED_USERS = 500;
+
+  function maEvictStale() {
+    const now = Date.now();
+    // 1) vyfiltruj staré entries v každé user historii; smaž celý záznam, pokud zbylo 0
+    for (const [user, list] of maUserHistory) {
+      const fresh = list.filter((m) => now - m.ts <= MA_USER_HISTORY_TTL_MS);
+      if (fresh.length) maUserHistory.set(user, fresh);
+      else maUserHistory.delete(user);
+    }
+    // 2) cooldowny starší 5 min nepotřebujeme
+    for (const [user, ts] of maAlertCooldown) {
+      if (now - ts > MA_COOLDOWN_TTL_MS) maAlertCooldown.delete(user);
+    }
+    // 3) hard cap na velikost map – LRU-light (smaže nejstarší podle TS poslední zprávy)
+    if (maUserHistory.size > MA_MAX_TRACKED_USERS) {
+      const sorted = [...maUserHistory.entries()].sort(
+        (a, b) => (a[1].at(-1)?.ts || 0) - (b[1].at(-1)?.ts || 0)
+      );
+      const toDrop = sorted.slice(0, maUserHistory.size - MA_MAX_TRACKED_USERS);
+      for (const [user] of toDrop) {
+        maUserHistory.delete(user);
+        maAlertCooldown.delete(user);
+        maUserLastTimeout.delete(user);
+      }
+    }
+  }
 
   async function maSaveSettings(updates) {
     maSettings = { ...maSettings, ...updates };
     try { await chrome.storage.sync.set({ [MA_KEY]: maSettings }); } catch (_) {}
   }
 
-  let _maEnabledLogged = null;
   function maIsEnabled() {
-    if (!maSettings.enabled) {
-      if (_maEnabledLogged !== "disabled") { console.log("[KCE-MA] ✗ settings.enabled = false"); _maEnabledLogged = "disabled"; }
-      return false;
-    }
-    if (maSettings.checkModOnly && !maIsMod) {
-      if (_maEnabledLogged !== "nomod") { console.log("[KCE-MA] ✗ checkModOnly=true ale maIsMod=false → MA vypnuta"); _maEnabledLogged = "nomod"; }
-      return false;
-    }
+    if (!maSettings.enabled) return false;
+    // Mod akce jsou bezpodmínečně vázané na ověřený moderátorský status
+    if (!kceUserIsModerator) return false;
     const du = maSettings.disabledUntil;
-    if (du === null || du === undefined) { _maEnabledLogged = "ok"; return true; }
-    if (du === -1) {
-      if (_maEnabledLogged !== "perm") { console.log("[KCE-MA] ✗ trvale vypnuta (disabledUntil=-1)"); _maEnabledLogged = "perm"; }
-      return false;
-    }
-    if (Date.now() < du) {
-      if (_maEnabledLogged !== "time") { console.log("[KCE-MA] ✗ dočasně vypnuta do", new Date(du).toLocaleTimeString()); _maEnabledLogged = "time"; }
-      return false;
-    }
+    if (du === null || du === undefined) return true;
+    if (du === -1) return false;
+    if (Date.now() < du) return false;
+    // Časový vypnutí vypršel – obnovíme aktivní stav
     maSaveSettings({ disabledUntil: null });
-    _maEnabledLogged = "ok";
     return true;
   }
 
-  async function maCheckModStatus() {
-    if (!maSettings.checkModOnly) { maIsMod = true; return; }
-
+  /**
+   * Univerzální kontrola, jestli je uživatel moderátor aktuálního kanálu.
+   * Nastavuje kceUserIsModerator + maIsMod (legacy alias).
+   * Default: pokud API nevrátí žádný indikátor moderátorství → FALSE (bezpečně).
+   */
+  async function checkModeratorStatus() {
+    kceModCheckPending = true;
     const channelMatch = window.location.pathname.match(/^\/([^/]+)/);
     const channel = channelMatch ? channelMatch[1].toLowerCase() : null;
-    if (!channel || channel === "" || channel === "browse" || channel === "following") {
+    if (!channel || NON_CHANNEL_PATHS.has(channel)) {
+      kceUserIsModerator = false;
       maIsMod = false;
+      kceModCheckPending = false;
+      removeAllModHandles();
       return;
     }
-    if (maModCache.has(channel)) { maIsMod = maModCache.get(channel); return; }
+    if (maModCache.has(channel)) {
+      kceUserIsModerator = maModCache.get(channel);
+      maIsMod = kceUserIsModerator;
+      kceModCheckPending = false;
+      if (!kceUserIsModerator) removeAllModHandles();
+      return;
+    }
 
-    // Výchozí: předpokládáme mod; nastavíme false jen při pozitivním potvrzení opaku
-    let isMod = true;
+    let isMod = false;
     try {
       const r = await pageContextFetch(
         "https://kick.com/api/v2/channels/" + encodeURIComponent(channel),
@@ -820,18 +1061,91 @@
       );
       if (r.ok) {
         const data = JSON.parse(r.text);
-        // Kick API vrací is_moderator nebo role – pokud to existuje, použij to
-        if (data?.is_moderator === false) isMod = false;
-        else if (data?.is_moderator === true) isMod = true;
-        else if (data?.chatroom?.is_moderator === false) isMod = false;
+        // Hledáme jakýkoli indikátor moderátorství / vyšší role.
+        if (data?.is_moderator === true) isMod = true;
         else if (data?.chatroom?.is_moderator === true) isMod = true;
-        // Pokud pole neexistuje vůbec, necháme isMod = true (nelze určit → neblokuj)
+        else if (typeof data?.user_role === "string" && /moderator|owner|admin|broadcaster/i.test(data.user_role)) isMod = true;
+        else if (Array.isArray(data?.roles) && data.roles.some((rr) => /moderator|owner|broadcaster/i.test(String(rr)))) isMod = true;
+        else if (data?.user?.is_moderator === true) isMod = true;
+
+        // Stejnou response využijeme pro extrakci slow mode info
+        kceSlowModeInfo = extractSlowModeInfo(data);
+        kceLog("[KCE] slow mode:", kceSlowModeInfo);
       }
     } catch (_) {}
 
+    kceUserIsModerator = isMod;
     maIsMod = isMod;
     maModCache.set(channel, isMod);
-    console.log("[KCE-MA] mod check →", channel, "isMod:", isMod, "| checkModOnly:", maSettings.checkModOnly, "| maIsEnabled nyní:", maIsEnabled());
+    kceModCheckPending = false;
+    kceLog("[KCE] mod check →", channel, "isMod:", isMod);
+    if (!isMod) removeAllModHandles();
+  }
+
+  // Zpětná kompatibilita s původním názvem (volá se z maInit)
+  const maCheckModStatus = checkModeratorStatus;
+
+  function removeAllModHandles() {
+    try {
+      querySelectorAllDeep(document.body, ".kce-mod-handle").forEach((h) => h.remove());
+    } catch (_) {}
+  }
+
+  // =====================================================
+  //  SLOW MODE: skrýt Kickovu hover bublinu, doplnit interval do banneru
+  // =====================================================
+
+  // Regex pro text bubliny – pokrýváme EN i CZ formulace
+  const SLOWMODE_TOOLTIP_RE = /(slow\s*mode|pomal[ýy]\s*re[žz]im|chat\s*delay|send.{0,20}message.{0,20}every|wait.{0,30}second|sekund.{0,30}mezi|napsat.{0,30}zpr[áa]v[uy])/i;
+  const SLOWMODE_BANNER_RE = /^(slow\s*mode\s*activated|slow\s*mode|pomal[ýy]\s*re[žz]im(\s*aktivn[íi])?)$/i;
+
+  function suppressSlowModeTooltips(root) {
+    if (!root || root.nodeType !== Node.ELEMENT_NODE) return;
+    // Common popover/tooltip selectors – Kick používá různé library wrappery
+    const candidates = root.matches?.("[role='tooltip'], [class*='tooltip'], [class*='Tooltip'], [class*='popover'], [class*='Popover'], [class*='popper']")
+      ? [root]
+      : [];
+    try {
+      root.querySelectorAll?.(
+        "[role='tooltip'], [class*='tooltip'], [class*='Tooltip'], [class*='popover'], [class*='Popover'], [class*='popper']"
+      ).forEach((el) => candidates.push(el));
+    } catch (_) {}
+    for (const el of candidates) {
+      if (el.dataset.kceSlowmodeHidden) continue;
+      if (el.closest?.(".kce-ma-popup, .kce-ma-welcome, .kce-pause-banner")) continue;
+      const text = (el.textContent || "").trim();
+      if (text.length < 4 || text.length > 200) continue;
+      if (SLOWMODE_TOOLTIP_RE.test(text)) {
+        el.style.setProperty("display", "none", "important");
+        el.dataset.kceSlowmodeHidden = "1";
+        kceLog("[KCE] suppressed slowmode tooltip:", text.slice(0, 80));
+      }
+    }
+  }
+
+  function annotateSlowModeBanner(root) {
+    if (!root) root = document.body;
+    if (!kceSlowModeInfo.enabled || !kceSlowModeInfo.interval) return;
+    const annotation = ` (${kceSlowModeInfo.interval}s)`;
+    // Najdeme leafový element s textem matchujícím banner regex
+    const walk = (node) => {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.closest?.(".kce-ma-popup, .kce-ma-welcome, .kce-pause-banner")) return;
+      if (node.dataset?.kceSlowmodeAnnotated) return;
+      if (node.children.length === 0) {
+        const text = (node.textContent || "").trim();
+        if (SLOWMODE_BANNER_RE.test(text)) {
+          node.textContent = text + annotation;
+          node.dataset.kceSlowmodeAnnotated = "1";
+          return;
+        }
+      }
+      try {
+        for (const c of node.children) walk(c);
+        if (node.shadowRoot) for (const c of node.shadowRoot.children || []) walk(c);
+      } catch (_) {}
+    };
+    walk(root);
   }
 
   function maNormalize(text) {
@@ -926,65 +1240,21 @@
     return { username, messageText };
   }
 
-  // ── Primární detekce: MutationObserver → maHandleNewNode ──
-  // Voláno přímo z observeChat když jsou přidány nové DOM nody.
-  // Čeká 500ms na React/Vue render, pak extrahuje a kontroluje zprávy.
-  let maPendingNodes = [];
-  let maPendingFlushId = null;
-
-  function maHandleNewNode(node) {
-    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
-    const cl = node.classList;
-    if (cl?.contains?.("kce-mod-handle") || cl?.contains?.("kce-swipe-bg") ||
-        cl?.contains?.("kce-ma-popup") || cl?.contains?.("kce-ma-welcome")) return;
-    console.log("[KCE-MA] node přijat:", node.tagName, String(node.className || "").slice(0, 50));
-    maPendingNodes.push(node);
-    if (maPendingFlushId) return;
-    maPendingFlushId = setTimeout(() => {
-      maPendingFlushId = null;
-      console.log("[KCE-MA] flush:", maPendingNodes.length, "nodů, enabled:", maIsEnabled());
-      if (!maIsEnabled()) { maPendingNodes = []; return; }
-      const nodes = maPendingNodes.splice(0);
-      for (const n of nodes) {
-        if (!n.isConnected) continue;
-        // Použij querySelectorAllDeep – prochází i shadow DOM (7TV SEVENTV-CONTAINER)
-        const deep = querySelectorAllDeep(n, "[data-chat-entry], .kce-message");
-        const candidates = deep.length > 0 ? deep : [n];
-        for (const entry of candidates) {
-          if (!entry || entry.nodeType !== Node.ELEMENT_NODE) continue;
-          if (entry.classList?.contains?.("kce-mod-handle") || entry.classList?.contains?.("kce-ma-popup")) continue;
-          if (maProcessedEntries.has(entry)) continue;
-          const text = (entry.textContent || "").trim();
-          if (text.length < 4 || !text.includes(":")) continue;
-          maProcessedEntries.add(entry);
-          const { username, messageText } = maExtractFromEntry(entry);
-          console.log("[KCE-MA] extract →", { username, msg: messageText?.slice(0, 40), tag: entry.tagName });
-          if (username && messageText) {
-            console.log("[KCE-MA] Mutation:", username, "→", messageText.slice(0, 50));
-            maCheckMessage(username, messageText);
-          }
-        }
-      }
-    }, 500);
-  }
-
-  // ── Záložní scan: každých 800ms, pouze pokud mutation nestačí ──
+  // Primární detekce zpráv pro Moderation Assist běží přes WebSocket bridge
+  // (kce-new-chat-message event). maPeriodicScan zůstává jako záchrana 1× za 30s.
   function maPeriodicScan() {
+    // Záložní scan – už primárně nepotřebný, ale necháváme kdyby bridge selhal.
+    // 1× za 30s prohledáme DOM a zkontrolujeme nezpracované zprávy.
     if (!maIsEnabled()) return;
     const root = findChatroomEl() || document.body;
-    // querySelectorAllDeep prochází i shadow DOM (7TV, jiné emote extensions)
-    const entries = querySelectorAllDeep(root, "[data-chat-entry], .kce-message");
+    const entries = querySelectorAllDeep(root, "[data-chat-entry], .chat-entry, .kce-message");
     for (const entry of entries) {
       if (maProcessedEntries.has(entry)) continue;
-      if (entry.classList.contains("kce-ma-popup") || entry.classList.contains("kce-ma-welcome")) continue;
       const text = (entry.textContent || "").trim();
       if (text.length < 4 || !text.includes(":")) continue;
       maProcessedEntries.add(entry);
       const { username, messageText } = maExtractFromEntry(entry);
-      if (username && messageText) {
-        console.log("[KCE-MA] Scan:", username, "→", messageText.slice(0, 50));
-        maCheckMessage(username, messageText);
-      }
+      if (username && messageText) maCheckMessage(username, messageText);
     }
   }
 
@@ -1030,6 +1300,8 @@
   // ── Welcome pill (Dynamic Island) ────────────────────
   let maWelcomeTimerId = null;
   function showMaWelcome() {
+    // Welcome pill ukazujeme jen moderátorům – jinak nic dělat nemůže.
+    if (kceModCheckPending || !kceUserIsModerator) return;
     const existing = document.querySelector(".kce-ma-welcome");
     if (existing) existing.remove();
     if (maWelcomeTimerId) { clearTimeout(maWelcomeTimerId); maWelcomeTimerId = null; }
@@ -1057,6 +1329,11 @@
   let maPopupTimerId = null;
 
   function showMaPopup(username, messages, triggerReason) {
+    // Mod Assist popup ukazujeme JEN moderátorům – jinak by tlačítka neuspěla na API.
+    if (kceModCheckPending || !kceUserIsModerator) {
+      kceLog("[KCE-MA] popup skipped – not moderator on this channel");
+      return;
+    }
     const existing = document.querySelector(".kce-ma-popup");
     if (existing) {
       existing.remove();
@@ -1209,13 +1486,23 @@
       maSettings = { ...MA_DEFAULT_SETTINGS, ...stored };
     } catch (_) {}
 
-    console.log("[KCE-MA] init – načtená nastavení:", JSON.stringify({ enabled: maSettings.enabled, checkModOnly: maSettings.checkModOnly, disabledUntil: maSettings.disabledUntil }), "| isMod:", maIsMod);
+    kceLog("[KCE-MA] init – načtená nastavení:", JSON.stringify({ enabled: maSettings.enabled, checkModOnly: maSettings.checkModOnly, disabledUntil: maSettings.disabledUntil }), "| isMod:", maIsMod);
 
-    // Kontrola mod statusu – BEZ await, aby neblokovala na 15s timeout
-    maCheckModStatus();
+    // Kontrola mod statusu pro aktuální kanál – BEZ await (15s API timeout neblokuje init).
+    // Dokud check nedoběhne, mod akce jsou blokované (kceModCheckPending = true).
+    checkModeratorStatus();
 
     // Test command interceptor
     document.addEventListener("keydown", maInterceptChatInput, true);
+
+    // PRIMÁRNÍ detekce zpráv – page-bridge (MAIN world) zachytává zprávy přímo
+    // z Pusher WebSocketu a vystřelí event. Žádný DOM parsing, žádný delay.
+    document.addEventListener("kce-new-chat-message", (e) => {
+      const { username, content } = e.detail || {};
+      if (!username || !content) return;
+      if (maIsEnabled()) maCheckMessage(username, content);
+      handleMentionInMessage(username, content);
+    });
 
     // Po 3s: označ stávající zprávy jako zpracované a spusť scan
     setTimeout(() => {
@@ -1223,12 +1510,15 @@
       const scanRoot = findChatroomEl() || document.body;
       // Pre-markujeme jen elementy s reálným obsahem (ne prázdné [data-index] placeholdery
       // ve virtuálním listu – ty by jinak byly považovány za zpracované i po načtení obsahu)
-      querySelectorAllDeep(scanRoot, "[data-chat-entry], .kce-message").forEach((el) => {
+      querySelectorAllDeep(scanRoot, "[data-chat-entry], .chat-entry, .kce-message").forEach((el) => {
         const text = (el.textContent || "").trim();
         if (text.length > 3 && text.includes(":")) maProcessedEntries.add(el);
       });
-      // Spusť záložní periodický scan
-      setInterval(maPeriodicScan, 800);
+      // Záložní scan – primární cesta vede přes WebSocket bridge.
+      // Tady scanujeme jen sporadicky pro případ, že by bridge nezachytil event.
+      setInterval(maPeriodicScan, 30000);
+      // Memory cleanup 1× za minutu (TTL na maUserHistory, cooldown, hard-cap na userů)
+      setInterval(maEvictStale, 60000);
       // Welcome notifikace
       if (maIsEnabled()) showMaWelcome();
     }, 3000);
@@ -1282,7 +1572,11 @@
             if (node?.nodeType !== Node.ELEMENT_NODE) continue;
             if (isOwnMutation(node) || isEmoteExtensionNode(node)) continue;
             dominated = false;
-            maHandleNewNode(node);
+            // Slow mode bublina se přidává jako tooltip-pozicovaný element – chyť ji okamžitě
+            suppressSlowModeTooltips(node);
+            // Uložená šířka chatu – pokud panel právě teď naběhl, aplikuj okamžitě.
+            // Tohle běží i předtím, než dojde řada na setupChatResize() v init().
+            if (kceSavedChatWidth) tryApplyChatWidth();
             if (node.dataset?.chatEntry) {
               addEnhancementClass(node, "message");
               tagLinkHighlights(node);
@@ -1302,8 +1596,8 @@
 
     observer.observe(document.body, { childList: true, subtree: true, attributes: false });
 
-    const delays = [100, 500, 1000, 2000, 5000, 10000];
-    delays.forEach((ms) => setTimeout(tagChatMessages, ms));
+    // Startup retag pro fázi načítání (před tím, než observer chytne všechno)
+    [200, 1500, 5000].forEach((ms) => setTimeout(tagChatMessages, ms));
   }
 
   function querySelectorDeep(root, selector) {
@@ -1327,6 +1621,26 @@
       if (node.nodeType === Node.ELEMENT_NODE) {
         const t = (node.textContent || "").trim();
         if (t.includes(text)) out.push(node);
+        try {
+          if (node.shadowRoot) {
+            for (const c of node.shadowRoot.childNodes || []) walk(c);
+          }
+          for (const c of node.children || node.childNodes || []) walk(c);
+        } catch (_) {}
+      }
+    };
+    walk(root);
+    return out;
+  }
+
+  function findElementsByTextInsensitive(root, text) {
+    const needle = text.toLowerCase();
+    const out = [];
+    const walk = (node) => {
+      if (!node) return;
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const t = (node.textContent || "").toLowerCase();
+        if (t.includes(needle)) out.push(node);
         try {
           if (node.shadowRoot) {
             for (const c of node.shadowRoot.childNodes || []) walk(c);
@@ -1453,8 +1767,14 @@
       let scrollIntoViewRestore = null;
       const hiddenKickNotifications = new Set();
       let kickBannerHideInterval = null;
-      const KICK_PAUSE_TEXT = "Chat paused for scrolling";
-      const KICK_PAUSE_TEXT_ALT = "paused for scrolling";
+      // Substringy pro Kickův "pauza při scrollu" banner v různých jazycích.
+      // Hledá se jako case-insensitive includes – stačí, aby jakýkoli substring sedl.
+      const KICK_PAUSE_TEXT_HINTS = [
+        "paused for scrolling",     // EN
+        "chat paused",               // EN zkrácené
+        "pozastaven",                // CZ (chat pozastaven)
+        "pozastav",                  // CZ kratší
+      ];
 
       const primaryScrollContainer = allScrollContainers[0];
 
@@ -1467,7 +1787,7 @@
       banner.className = "kce-pause-banner";
       banner.textContent = "Chat pozastaven";
       banner.style.cssText =
-        "display:none;position:fixed;z-index:2147483647;pointer-events:none;" +
+        "display:none;position:fixed;z-index:9999;pointer-events:none;" +
         "padding:6px 12px;font-size:12px;color:#d0d0d8;background:rgba(20,22,25,0.93);" +
         "border-bottom:1px solid rgba(255,255,255,0.10);text-align:center;" +
         "box-shadow:0 2px 8px rgba(0,0,0,0.35);transition:opacity 0.15s;";
@@ -1622,10 +1942,13 @@
       }
 
       function findKickPauseBannerElements() {
-        const found = [
-          ...findElementsByText(document.body, KICK_PAUSE_TEXT),
-          ...findElementsByText(document.body, KICK_PAUSE_TEXT_ALT),
-        ];
+        // Sbíráme přes všechny lokalizační substringy; deduplikujeme a vyhazujeme
+        // 1) náš vlastní banner (.kce-pause-banner), 2) elementy, které obsahují jiné nalezené
+        const all = new Set();
+        for (const hint of KICK_PAUSE_TEXT_HINTS) {
+          for (const el of findElementsByTextInsensitive(document.body, hint)) all.add(el);
+        }
+        const found = [...all].filter((el) => !el.closest(".kce-pause-banner"));
         return found.filter((el) => !found.some((other) => other !== el && el.contains(other)));
       }
 
@@ -1653,9 +1976,13 @@
             } catch (_) {}
           }
           if (kickBannerElements.length > 0) return;
-          const resumeTexts = ["Jump to live", "Go to live", "Resume", "View new messages", "New messages"];
+          // Texty tlačítek "skoč na živý chat" – EN i CZ varianty
+          const resumeTexts = [
+            "Jump to live", "Go to live", "Resume", "View new messages", "New messages",
+            "Skočit", "Pokračovat", "Nové zprávy", "Zobrazit nové",
+          ];
           for (const text of resumeTexts) {
-            const btns = findElementsByText(document.body, text);
+            const btns = findElementsByTextInsensitive(document.body, text);
             const clickable = btns.find((el) => el.closest?.("button, a, [role='button']"));
             if (clickable) {
               const btn = clickable.closest("button, a, [role='button']") || clickable;
@@ -1731,8 +2058,10 @@
     };
 
     run();
-    [500, 1500, 3500, 7000, 12000, 20000].forEach((ms) => setTimeout(run, ms));
-    setInterval(run, 8000);
+    // Startup retry – Kick chat panel se renderuje postupně. Po 3 pokusech necháváme
+    // už jen 12s watchdog, který znovu připojí handler, pokud Kick chatroom přemontoval.
+    [800, 3000, 8000].forEach((ms) => setTimeout(run, ms));
+    setInterval(run, 12000);
   }
 
   /**
@@ -1751,51 +2080,54 @@
     }, 150);
   }
 
-  /** Diagnostika – jednou vypíše do konzole strukturu jedné zprávy chatu */
+  /** Diagnostika struktury zprávy – běží jen s KCE_DEBUG=1.
+   *  Použij pro ladění, když Kick změní DOM a selektory přestanou matchovat. */
   let diagDone = false;
   function logChatDiagnostic() {
-    if (diagDone) return;
-    const entry = document.querySelector("div[data-index]") || document.querySelector("[data-chat-entry]");
+    if (!KCE_DEBUG || diagDone) return;
+    const entry = document.querySelector("div[data-index]") || document.querySelector("[data-chat-entry], .chat-entry");
     if (!entry) return;
     diagDone = true;
-    const info = { tag: entry.tagName, classes: entry.className, attrs: {} };
-    for (const a of entry.attributes) info.attrs[a.name] = a.value;
     const cs = getComputedStyle(entry);
-    info.computed = {
-      height: cs.height, minHeight: cs.minHeight, maxHeight: cs.maxHeight,
-      paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
-      marginTop: cs.marginTop, marginBottom: cs.marginBottom,
-      lineHeight: cs.lineHeight, display: cs.display,
-      position: cs.position, top: cs.top, transform: cs.transform,
+    const info = {
+      tag: entry.tagName,
+      classes: entry.className,
+      offsetHeight: entry.offsetHeight,
+      computed: { lineHeight: cs.lineHeight, position: cs.position, transform: cs.transform },
     };
-    info.offsetHeight = entry.offsetHeight;
-    info.clientHeight = entry.clientHeight;
-    info.inlineStyle = entry.style.cssText;
-    const parent = entry.parentElement;
-    if (parent) {
-      const pcs = getComputedStyle(parent);
-      info.parent = {
-        tag: parent.tagName, classes: parent.className,
-        display: pcs.display, gap: pcs.gap, rowGap: pcs.rowGap,
-        position: pcs.position, height: pcs.height,
-        inlineStyle: parent.style.cssText,
-      };
-    }
-    const child = entry.firstElementChild;
-    if (child) {
-      const ccs = getComputedStyle(child);
-      info.firstChild = {
-        tag: child.tagName, classes: child.className,
-        paddingTop: ccs.paddingTop, paddingBottom: ccs.paddingBottom,
-        marginTop: ccs.marginTop, marginBottom: ccs.marginBottom,
-        height: ccs.height, display: ccs.display,
-        inlineStyle: child.style.cssText,
-      };
-    }
-    console.log("[KCE] Chat message diagnostic:", JSON.stringify(info, null, 2));
+    kceLog("[KCE] Chat message diagnostic:", info);
   }
 
   const CHAT_WIDTH_KEY = "kickChatEnhancerChatWidth";
+
+  // ── EARLY LOAD šířky chatu ──────────────────────────────
+  // Načítáme okamžitě (paralelně se zbytkem init), aby Kick neměl čas vyrenderovat
+  // chat v default šířce a pak se to neměnilo skokem. Aplikujeme jakmile panel existuje.
+  let kceSavedChatWidth = null;
+  const kceChatWidthLoadedPromise = chrome.storage.sync.get(CHAT_WIDTH_KEY)
+    .then((result) => {
+      kceSavedChatWidth = result[CHAT_WIDTH_KEY] || null;
+      tryApplyChatWidth();
+    })
+    .catch(() => {});
+
+  function applyChatWidthToPanel(panel) {
+    if (!kceSavedChatWidth || !panel) return false;
+    if (panel.dataset.kceChatWidthApplied === String(kceSavedChatWidth)) return true;
+    panel.style.width = kceSavedChatWidth + "px";
+    panel.style.minWidth = kceSavedChatWidth + "px";
+    panel.style.maxWidth = kceSavedChatWidth + "px";
+    panel.style.flexShrink = "0";
+    panel.dataset.kceChatWidthApplied = String(kceSavedChatWidth);
+    return true;
+  }
+
+  function tryApplyChatWidth() {
+    if (!kceSavedChatWidth) return false;
+    const panel = findChatPanel();
+    if (panel) return applyChatWidthToPanel(panel);
+    return false;
+  }
 
   function findChatPanel() {
     const selectors = [
@@ -1823,26 +2155,33 @@
     return null;
   }
 
+  let setupChatResizeRunning = false;
   async function setupChatResize() {
+    if (setupChatResizeRunning) return;
+    setupChatResizeRunning = true;
+    try {
+      await _setupChatResizeImpl();
+    } finally {
+      setupChatResizeRunning = false;
+    }
+  }
+  async function _setupChatResizeImpl() {
     const existing = document.querySelector(".kce-chat-resize-handle");
     if (existing && existing.isConnected) return;
     if (existing) existing.remove();
 
-    const trySetup = async () => {
+    // Počkáme jen na load uložené šířky (paralelně už běží od start scriptu).
+    await kceChatWidthLoadedPromise;
+
+    const trySetup = () => {
       const chatPanel = findChatPanel();
       if (!chatPanel) return false;
 
       const parent = chatPanel.parentElement;
       if (!parent) return false;
 
-      const result = await chrome.storage.sync.get(CHAT_WIDTH_KEY);
-      const savedWidth = result[CHAT_WIDTH_KEY];
-      if (savedWidth) {
-        chatPanel.style.width = savedWidth + "px";
-        chatPanel.style.minWidth = savedWidth + "px";
-        chatPanel.style.maxWidth = savedWidth + "px";
-        chatPanel.style.flexShrink = "0";
-      }
+      // Aplikuj šířku okamžitě (idempotentní – pokud už platí, nic se nestane)
+      applyChatWidthToPanel(chatPanel);
 
       const handle = document.createElement("div");
       handle.className = "kce-chat-resize-handle";
@@ -1872,6 +2211,8 @@
         chatPanel.style.minWidth = newWidth + "px";
         chatPanel.style.maxWidth = newWidth + "px";
         chatPanel.style.flexShrink = "0";
+        kceSavedChatWidth = newWidth;
+        chatPanel.dataset.kceChatWidthApplied = String(newWidth);
       });
 
       window.addEventListener("mouseup", () => {
@@ -1887,16 +2228,37 @@
         }, 300);
       });
 
-      console.log("[KCE] Chat resize handle připojen (sibling):", chatPanel.tagName, chatPanel.className?.slice(0, 60));
+      kceLog("[KCE] Chat resize handle připojen:", chatPanel.tagName, chatPanel.className?.slice(0, 60));
       return true;
     };
 
-    if (await trySetup()) return;
-    const delays = [500, 1500, 3000, 6000, 10000];
+    if (trySetup()) return;
+    // Rychlejší retry sekvence – panel se obvykle objeví do 1-2s, dáváme dohromady ~5s pokrytí.
+    const delays = [100, 250, 500, 1000, 2000, 4000];
     for (const ms of delays) {
       await new Promise((r) => setTimeout(r, ms));
-      if (await trySetup()) return;
+      if (trySetup()) return;
     }
+  }
+
+  // Při navigaci v Kick SPA (pushState) se kanál může změnit – musíme zopakovat mod check
+  // a smazat staré handles, dokud potvrzení nepřijde.
+  function setupSpaNavigationWatch() {
+    let lastPath = window.location.pathname;
+    const onPathChange = () => {
+      const current = window.location.pathname;
+      if (current === lastPath) return;
+      lastPath = current;
+      kceLog("[KCE] SPA navigace →", current);
+      removeAllModHandles();
+      checkModeratorStatus();
+    };
+    // pushState / replaceState wrapper – Kick používá React Router
+    const origPush = history.pushState;
+    const origReplace = history.replaceState;
+    history.pushState = function (...args) { const r = origPush.apply(this, args); onPathChange(); return r; };
+    history.replaceState = function (...args) { const r = origReplace.apply(this, args); onPathChange(); return r; };
+    window.addEventListener("popstate", onPathChange);
   }
 
   async function init() {
@@ -1904,8 +2266,11 @@
     const settings = await getSettings();
     applyEnhancements(settings);
     tagChatMessages();
+    // Username detekce běží paralelně – pro mention highlight je třeba znát aktuálního usera
+    detectCurrentUsername();
     await maInit();
     observeChat();
+    setupSpaNavigationWatch();
     setupPauseOnHover(settings);
     setupModDragHandle(settings);
     setupChatResize();
@@ -1913,10 +2278,17 @@
       const h = document.querySelector(".kce-chat-resize-handle");
       if (!h || !h.isConnected) setupChatResize();
     }, 8000);
+    // Doplnit "(Xs)" do "Slow mode activated" banneru – Kick ho re-renderuje při změnách,
+    // periodicky kontrolujeme. Suppression tooltipu běží zvlášť přes MutationObserver.
+    setInterval(() => {
+      if (kceSlowModeInfo.enabled) annotateSlowModeBanner(document.body);
+      // Suppress i ony Kickovy tooltipy, co tam mohly stát od loadu (před našim observer registered)
+      suppressSlowModeTooltips(document.body);
+    }, 1500);
     // Jeden resize event pro virtualizer (CSS změnilo výšky řádků) – jen jednou
     setTimeout(() => window.dispatchEvent(new Event("resize")), 300);
-    // Scroll na nejnovější zprávy v různých časech (bez resize – nezničíme 7TV emoty)
-    [300, 800, 1500, 3000, 6000].forEach((ms) => setTimeout(() => {
+    // Scroll na nejnovější zprávy – 2× stačí (300ms hned po injekci CSS, 2000ms po načtení chatu)
+    [300, 2000].forEach((ms) => setTimeout(() => {
       nudgeVirtualizerAndScroll();
       logChatDiagnostic();
     }, ms));
